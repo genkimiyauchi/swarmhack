@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from robots import robots, server_none, server_york
+from robots import robots, server_none, server_sheffield
 
 import asyncio
 import websockets
@@ -34,7 +34,7 @@ function should be declared with "async" (see the simple_obstacle_avoidance() ex
 main_loop() using loop.run_until_complete(async_thing_to_run(ids))
 """
 
-robot_ids = [31, 32, 38]
+robot_ids = [1]
 
 def main_loop():
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
@@ -297,9 +297,9 @@ ids = []
 
 # Server address, port details, globals
 #---------------------------------------
-server_address = server_york
-server_port = 6000
-robot_port = 6000
+server_address = server_sheffield
+server_port = 6001
+robot_port = 80
 
 if len(server_address) == 0:
     raise Exception(f"Enter local tracking server address on line {inspect.currentframe().f_lineno - 6}, "

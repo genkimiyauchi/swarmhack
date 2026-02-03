@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
-from robots import robots, server_none, server_york
+from robots import robots, server_none, server_sheffield
 import asyncio, json, sys
 import websockets
 from websockets.sync.client import connect
 
-server_address = server_york
+server_address = server_sheffield
 server_port = 6000
 robot_port = 6000
 
