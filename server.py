@@ -146,6 +146,8 @@ class Tracker(threading.Thread):
     def __init__(self):
 
         threading.Thread.__init__(self)
+        self.daemon = True  # Make thread daemon so it stops when main program exits
+        self.stop_event = threading.Event()  # Flag to signal thread to stop
         self.camera = Camera()
         self.calibrated = False
         self.num_corner_tags = 0
@@ -184,11 +186,9 @@ class Tracker(threading.Thread):
                 self.gameState = 1
                 self.robots = {}
 
-
-        except AttributeError as e:
-            print('special key {0} pressed'.format(
-                key))
-            print(e)
+        except AttributeError:
+            # Special keys (Ctrl, Shift, etc.) don't have 'char' attribute - ignore them
+            pass
     """
     processes raw tags and updates self.robots to contain a dictionary of all visible robots and their IDs
     
@@ -327,7 +327,7 @@ class Tracker(threading.Thread):
                      lineType=cv2.LINE_AA)
 
     def run(self):
-        while True:        
+        while not self.stop_event.is_set():
             image = self.camera.get_frame()
             overlay = image.copy()
             
@@ -375,10 +375,13 @@ class Tracker(threading.Thread):
             cv2.resizeWindow(window_name, 1280, 720)
             cv2.imshow(window_name, image)
 
-            # TODO: Fix quitting with Q (necessary for fullscreen mode)
-
+            # Check for 'q' key to quit
             if cv2.waitKey(1) == ord('q'):
-                sys.exit(1)
+                print("Quit key pressed. Shutting down...")
+                self.stop_event.set()
+                break
+        
+        cv2.destroyAllWindows()
 
 async def handler(websocket):
     async for packet in websocket:
@@ -416,20 +419,29 @@ async def handler(websocket):
                 await websocket.send(json.dumps(reply))
 
 
-# TODO: Handle Ctrl+C signals
-if __name__ == "__main__":
+async def main():
     global tracker
+    print("Initializing Tracker...")
     tracker = Tracker()
     tracker.start()
 
-    ##
-    # Use the following iptables rule to forward port 80 to 6000 for the server to use:
-    #   sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 6000
-    # Alternatively, change the port below to 80 and run this Python script as root.
-    ##
-    start_server = websockets.serve(ws_handler=handler, host=None, port=6001)
-    # start_server = websockets.serve(ws_handler=handler, host="144.32.165.233", port=6000)
+    print("Starting WebSocket server on port 6001...")
+    
+    # In newer websockets versions, we use the server as an async context manager.
+    try:
+        async with websockets.serve(handler, host="0.0.0.0", port=6001):
+            # Wait for tracker thread to signal stop event
+            while not tracker.stop_event.is_set():
+                await asyncio.sleep(0.1)
+            print("Tracker stopped. Shutting down server...")
+    except Exception as e:
+        print(f"Server error: {e}")
+    finally:
+        # Ensure tracker stops
+        tracker.stop_event.set()
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_server)
-    loop.run_forever()
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nServer shut down by user.")
