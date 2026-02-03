@@ -5,7 +5,8 @@ class Camera:
 	
     def __init__(self):
 
-        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        # self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2) # Ubuntu (change channel if needed)
+        self.cap = cv2.VideoCapture(1, cv2.CAP_DSHOW) # Windows
 
         if not self.cap.isOpened():
             print("Cannot open camera")
@@ -24,3 +25,13 @@ class Camera:
     def get_frame(self):
         ret, frame = self.cap.read()
         return frame
+    
+if __name__ == "__main__":
+    cam = Camera()
+    while True:
+        frame = cam.get_frame()
+        cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cam.cap.release()
+    cv2.destroyAllWindows()
