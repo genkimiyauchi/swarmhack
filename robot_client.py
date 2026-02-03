@@ -116,7 +116,7 @@ async def send_commands(robot):
         """
         if robot.state == RobotState.FORWARDS:
             left = right = robot.MAX_SPEED
-            if (time.time() - robot.turn_time > 0.5) and any(ir > 80 for ir in robot.ir_readings):
+            if False:  # IR sensor check disabled
                 robot.turn_time = time.time()
                 robot.state = random.choice((RobotState.LEFT, RobotState.RIGHT))
             elif (time.time() - robot.regroup_time > 5): # Every 5 seconds, go into the "regroup" state
@@ -440,17 +440,9 @@ async def get_server_data():
         for id, robot in filtered_reply.items():
             #print(f"Updating robot {id}")
             active_robots[id].orientation = robot["orientation"]
-            active_robots[id].role = robot["role"]
-            active_robots[id].team = robot["team"]
             active_robots[id].remaining_time = robot["remaining_time"]
             active_robots[id].neighbours = robot["players"]
-            active_robots[id].bearing_to_ball = robot["ball"]["bearing"]
-            active_robots[id].distance_to_ball = robot["ball"]["range"]   
             active_robots[id].progress_through_zone = robot["progress_through_zone"]   
-            active_robots[id].bearing_to_our_goal = robot["our_goal"]["bearing"]
-            active_robots[id].distance_to_our_goal = robot["our_goal"]["range"]
-            active_robots[id].bearing_to_their_goal = robot["their_goal"]["bearing"]
-            active_robots[id].distance_to_their_goal = robot["their_goal"]["range"]
               
 
     except Exception as e:
@@ -475,14 +467,13 @@ async def stop_robot(robot):
 # Get IR and battery readings from robot
 async def get_data(robot):
     try:
-        message = {"get_ir": True, "get_battery": True}
+        message = {"get_battery": True}
 
         # Send request for data and wait for reply
         await robot.connection.send(json.dumps(message))
         reply_json = await robot.connection.recv()
         reply = json.loads(reply_json)
 
-        robot.ir_readings = reply["ir"]
         robot.battery_voltage = reply["battery"]["voltage"]
         robot.battery_percentage = reply["battery"]["percentage"]
 
