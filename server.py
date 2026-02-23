@@ -26,6 +26,9 @@ black = (0, 0, 0)
 white = (255, 255, 255)
 grey = (100, 100, 100)
 
+target_info = {}
+robot_info = {}
+
 GAME_TIME = 5 * 60
 # random.seed(1)
 
@@ -304,6 +307,7 @@ class Tracker(threading.Thread):
             cv2.circle(image, (tag.centre.x, tag.centre.y), 5, red, -1, lineType=cv2.LINE_AA)
 
             tag = robot.tag
+            # print(f'robot {id} position: {robot.position.x}, {robot.position.y}')
 
             # Draw line from centre point to front of tag
             forward_point = ((tag.front - tag.centre) * 2) + tag.centre
@@ -326,7 +330,71 @@ class Tracker(threading.Thread):
             cv2.line(image, (tag.centre.x, tag.centre.y), (forward_point.x, forward_point.y), green, 3,
                      lineType=cv2.LINE_AA)
 
+
+    """
+    Responsible for drawing any UI element associated with the initial position of the robots.
+    
+    image -- The camera image for the robots to be drawn onto
+    """
+    def drawInitRobotPositions(self, image):
+        global robot_info
+        for robot in robot_info:
+
+            # Get tag
+            tag = self.robots[robot['id']].tag
+
+            # Draw circle on centre point (more transparent)
+            overlay = image.copy()
+            cx = self.min_x + int(robot["initial_position"]["x"] * self.scale_factor)
+            cy = self.min_y + int(robot["initial_position"]["y"] * self.scale_factor)
+            cv2.circle(overlay, (cx, cy), 25, red, -1, lineType=cv2.LINE_AA)
+            image[:] = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
+
+            # Draw line from centre point to front of tag
+            centre = Vector2D(cx, cy)
+            length_m = abs(tag.front - tag.centre) * 2 / self.scale_factor
+            angle_rad = math.radians(robot["initial_orientation"])
+
+            front_x_m = robot["initial_position"]["x"] + length_m * math.cos(angle_rad)
+            front_y_m = robot["initial_position"]["y"] + length_m * math.sin(angle_rad)
+
+            front_x_px = int(self.min_x + front_x_m * self.scale_factor)
+            front_y_px = int(self.min_y + front_y_m * self.scale_factor)
+
+            forward_point = Vector2D(front_x_px, front_y_px)
+
+            # Draw tag ID
+
+            line_overlay = image.copy()
+            cv2.line(line_overlay, (tag.centre.x, tag.centre.y), (centre.x, centre.y), cyan, 3,
+                     lineType=cv2.LINE_AA)
+            cv2.line(line_overlay, (centre.x, centre.y), (forward_point.x, forward_point.y), black, 10,
+                     lineType=cv2.LINE_AA)
+            cv2.line(line_overlay, (centre.x, centre.y), (forward_point.x, forward_point.y), green, 3,
+                     lineType=cv2.LINE_AA)
+            image[:] = cv2.addWeighted(line_overlay, 0.35, image, 0.65, 0)
+            
+
+    def drawTargets(self, image):
+        global target_info
+        for target in target_info:
+
+            # Draw circle on centre point (more transparent)
+            overlay = image.copy()
+            cx = self.min_x + int(target["position"]["x"] * self.scale_factor)
+            cy = self.min_y + int(target["position"]["y"] * self.scale_factor)
+            
+            # get radius in pixels
+            radius = int(target["radius"] * self.scale_factor)
+            
+            cv2.circle(overlay, (cx, cy), radius, magenta, -1, lineType=cv2.LINE_AA)
+            image[:] = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
+
+
     def run(self):
+        
+        global robot_info, target_info
+        
         while not self.stop_event.is_set():
             image = self.camera.get_frame()
             overlay = image.copy()
@@ -355,6 +423,12 @@ class Tracker(threading.Thread):
 
                 self.timer.update()
                 self.drawRobots(image)
+                
+                if len(robot_info) > 0:
+                    self.drawInitRobotPositions(image)
+                    
+                if len(target_info) > 0:
+                    self.drawTargets(image)
 
                 text = f"Time: {self.timer.getString()}"
                 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -413,6 +487,13 @@ async def handler(websocket):
                         reply[id]["players"][neighbour_id]["bearing"] = round(neighbour.bearing, 2)
                         reply[id]["players"][neighbour_id]["orientation"] = round(neighbour.orientation, 2)
 
+            if "targets" in message:
+                global target_info
+                target_info = message["targets"]
+
+            if "robots" in message:
+                global robot_info
+                robot_info = message["robots"]
 
             # Send reply, if requested
             if send_reply:
