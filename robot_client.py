@@ -18,6 +18,15 @@ import pprint
 import angles
 import colorama
 from colorama import Fore
+import xml.etree.ElementTree as ET
+
+ITERATION_TIME = 0.1   # Time to sleep between each iteration (default: 0.1)
+ROBOT_CONFIG = None # This will be set to the <robot_controller> tag in the experiment XML file, which contains any parameters you set for your controller in that file. See the example XML files for how to set this up.
+ROBOTS = [] # list of robot names
+ROBOT_INIT_POS = {} # key: robot name, value: initial position vector2d(x,y)
+ROBOT_INIT_ANGLE = {} # key: robot name, value: initial orientation in radians
+TARGET_POS = None
+TARGET_RADIUS = None
 
 """
 This function is the main loop of your application. You can make any changes you want throughout this 
@@ -53,12 +62,58 @@ def main_loop():
     print(Fore.GREEN + "[INFO]: Sending commands to detected robots")
     loop.run_until_complete(send_robot_commands(ids))
 
+    # Send experiment info to server
+    loop.run_until_complete(send_experiment_info())
+
     print()
 
     # Sleep until next control cycle. We use 0.1 seconds by default so as to not flood the network.
     time.sleep(0.1)
 
 
+def load_configuration(xml_path='experiments/practice1.xml'):
+    # Parse the experiment configurations
+    global ITERATION_TIME, ROBOT_CONFIG, ROBOTS, ROBOT_INIT_POS, TARGET_POS, TARGET_RADIUS
+
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+
+    for child in root:
+        if child.tag == 'framework':
+            ticks_per_second = float(child[1].get('ticks_per_second'))
+            ITERATION_TIME = 1 / ticks_per_second
+            
+        elif child.tag == 'controllers':
+            for controller in child:
+                if controller.tag == 'robot_controller':
+                    ROBOT_CONFIG = controller
+
+        elif child.tag == 'loop_functions':
+            for entity in child:
+                if entity.tag == 'target':
+                    pos_str = entity.get("position")
+                    x_str, y_str, *_ = pos_str.split(",")
+                    TARGET_POS = Vector2D(float(x_str), float(y_str))
+                    TARGET_RADIUS = float(entity.get('radius'))
+                    
+        # read init robots' position and orientation
+
+        elif child.tag == 'arena':
+            for entity in child:
+                if entity.tag == 'e-puck':
+                    name = int(entity.get('id'))
+                    ROBOTS.append(name)
+                    for body in entity:
+                        pos_str = body.get("position")
+                        x_str, y_str, *_ = pos_str.split(",")
+                        ROBOT_INIT_POS[name] = Vector2D(float(x_str), float(y_str))
+                        ROBOT_INIT_ANGLE[name] = float(body.get('orientation')[2]) # Orientation is given as x,y,z euler angles, but we only care about the z angle (rotation around vertical axis)
+
+    print(f'ROBOTS: {ROBOTS}')
+    print(f'ROBOT_INIT_POS: {ROBOT_INIT_POS}')
+    print(f'ROBOT_INIT_ANGLE: {ROBOT_INIT_ANGLE}')
+    print(f'TARGET_POS: {TARGET_POS}')
+    print(f'TARGET_RADIUS: {TARGET_RADIUS}')
 
 """
 This is an example of a behaviour. You will want to replace this with a behaviour that implements your team
@@ -481,6 +536,32 @@ async def get_data(robot):
         print(f"{type(e).__name__}: {e}")
 
 
+# Send experiment info to the server to be visualised
+async def send_experiment_info():
+
+    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS
+
+    message = {"robots": [], "targets": []}
+    
+    # send init robot position ROBOT_INIT_POS and orientation ROBOT_INIT_ANGLE to the server for visualisation
+    for id in ROBOTS:
+        robot_info = {
+            "id": id,
+            "initial_position": {"x": ROBOT_INIT_POS[id].x, "y": ROBOT_INIT_POS[id].y},
+            "initial_orientation": ROBOT_INIT_ANGLE[id]
+        }
+        message["robots"].append(robot_info)
+
+    # send target position and radius to the server for visualisation
+    target_info = {
+        "position": {"x": TARGET_POS.x, "y": TARGET_POS.y},
+        "radius": TARGET_RADIUS
+    }
+    message["targets"].append(target_info)
+
+    # Send the experiment info to the server
+    await server_connection.send(json.dumps(message))
+
 
 # Main entry point for robot control client sample code
 if __name__ == "__main__":
@@ -491,6 +572,10 @@ if __name__ == "__main__":
     if server_connection is None:
         print(Fore.RED + "[ERROR]: No connection to server")
         sys.exit(1)
+
+    # Parse experiment configurations
+    config_file = "experiments/practice1.xml"
+    load_configuration(config_file)
 
     assert len(robot_ids) > 0
 
