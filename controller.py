@@ -3,6 +3,7 @@ from enum import Enum
 from simple_pid import PID
 from vector2d import Vector2D
 from message import Message
+from colorama import Fore
 
 class State(Enum):
     RANDOM_WALK = 0  # Random walk
@@ -34,6 +35,7 @@ class Robot:
     def load_params(cls, config):
     
         for param in config[0]:
+            print(param.tag)
             if param.tag == 'target_tracking':
                 cls.KP = 10 # TODO: Read from xml file
                 cls.KI = 0 # TODO: Read from xml file
@@ -52,19 +54,34 @@ class Robot:
     
     def __init__(self, robot_id, config=None, team_id=1):
         self.id = robot_id
+        self.team_id = team_id
+        self.connection = None
+        
+        self.teleop = False
+        
+        self.orientation = 0
+        self.neighbours = {}
         
         # Init PID controller
 
         self.PID_heading = PID(
-            kp=self.KP,
-            ki=self.KI,
-            kd=self.KD,
+            Kp=self.KP,
+            Ki=self.KI,
+            Kd=self.KD,
             output_limits=(-self.MAX_SPEED, self.MAX_SPEED)
         )
         
         self.current_state = State.RANDOM_WALK
         
         self.led_colour = 'blue'
+        
+        # Message to send
+        self.msg = Message()
+        
+        # Messages received
+        self.messages = {}
+        self.team_msgs = []
+        self.other_msgs = []
         
         self.in_target = False
         self.target_found = False
@@ -87,6 +104,8 @@ class Robot:
     
     
     def control_step(self):
+        print(Fore.LIGHTCYAN_EX + f'--- Robot {self.id} ---')
+
         self.reset_variables()
         
         self.get_messages()
@@ -231,9 +250,9 @@ class Robot:
                 msg.direction = get_vector(self.neighbours[str(id)])
                 
             if msg.team_id == self.team_id:
-                self.team_msgs[id] = msg
+                self.team_msgs.append(msg)
             else:
-                self.other_msgs[id] = msg
+                self.other_msgs.append(msg)
                 
                 
     def get_attraction_vector(self):
@@ -296,7 +315,7 @@ class Robot:
             
             # TODO
     
-        return self.current_rotation
+        return Vector2D(0,0)
     
     
     def set_wheel_speeds_from_vector(self, vector):

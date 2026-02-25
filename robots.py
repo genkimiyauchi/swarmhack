@@ -1,6 +1,7 @@
 pipucks = {
     # Sheffield
     1:  "192.168.1.101",
+    20: "192.168.1.120",
 }
 
 robots = {**pipucks}
