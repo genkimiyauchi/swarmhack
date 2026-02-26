@@ -20,13 +20,13 @@
     <robot_controller>
       <params>
         <wheel_turning hard_turn_angle_threshold="90"
-                  soft_turn_angle_threshold="70"
+                  soft_turn_angle_threshold="90"
                   no_turn_angle_threshold="10"
-                  max_speed="10.0" />
-        <flocking target_distance_walk="20"
-                  target_distance_target="8"
-                  gain="1000"
-                  exponent="6" />
+                  max_speed="0.1" />
+        <flocking target_distance_walk="0.2"
+                  target_distance_target="0.08"
+                  gain="100"
+                  exponent="2" />
         <!-- <blocking target_distance="20"
                   gain="1000"
                   exponent="6" /> -->

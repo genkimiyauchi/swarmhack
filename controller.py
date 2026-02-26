@@ -32,9 +32,9 @@ class Robot:
     # Battery percentage might be a better
     BAT_LOW_VOLTAGE = 3.6
 
-    # Firmware on both robots accepts wheel velocities between -1000 and 1000.
-    # MAX_SPEED is specified in cm/s and converted to motor units (×100) when sending commands
-    MAX_SPEED = 10.0 # Default value in cm/s (10 cm/s = 1000 motor units)
+    # Firmware on both robots accepts wheel velocities between -1200 and 1200.
+    # MAX_SPEED is specified in m/s and converted to motor units (×10000) when sending commands
+    MAX_SPEED = 0.12 # Default value in m/s (0.12 m/s = 1200 motor units)
     HARD_TURN = 0
     SOFT_TURN = 1
     NO_TURN = 2
@@ -56,19 +56,19 @@ class Robot:
                 cls.SOFT_TURN_ON_ANGLE_THRESHOLD = math.radians(float(param.get("soft_turn_angle_threshold")))
                 cls.NO_TURN_ANGLE_THRESHOLD = math.radians(float(param.get("no_turn_angle_threshold")))
             elif param.tag == "target_tracking":
-                cls.KP = 10 # TODO: Read from xml file
-                cls.KI = 0 # TODO: Read from xml file
-                cls.KD = 0 # TODO: Read from xml file
-                cls.THRES_RANGE = 5 # TODO: Read from xml file
+                cls.KP = float(param.get("kp"))
+                cls.KI = float(param.get("ki"))
+                cls.KD = float(param.get("kd"))
+                cls.THRES_RANGE = float(param.get("thres_range"))
             elif param.tag == "flocking":
-                cls.TARGET_DISTANCE_WALK = 20 # TODO: Read from xml file
-                cls.TARGET_DISTANCE_TARGET = 8 # TODO: Read from xml file
-                cls.GAIN = 1000 # TODO: Read from xml file
-                cls.EXPONENT = 6 # TODO: Read from xml file
+                cls.TARGET_DISTANCE_WALK = float(param.get("target_distance_walk"))
+                cls.TARGET_DISTANCE_TARGET = float(param.get("target_distance_target"))
+                cls.GAIN = float(param.get("gain"))
+                cls.EXPONENT = float(param.get("exponent"))
             elif param.tag == "motion":
-                cls.MIN_RANDOM_WALK_ROTATION_ANGLE = 15 # TODO: Read from xml file
-                cls.MAX_RANDOM_WALK_ROTATION_ANGLE = 90 # TODO: Read from xml file
-                cls.BROADCAST_DURATION = 4 # TODO: Read from xml file
+                cls.MIN_RANDOM_WALK_ROTATION_ANGLE = float(param.get("random_walk_rotation_angle").split(",")[0])
+                cls.MAX_RANDOM_WALK_ROTATION_ANGLE = float(param.get("random_walk_rotation_angle").split(",")[1])
+                cls.BROADCAST_DURATION = float(param.get("broadcast_duration"))
 
     
     def __init__(self, robot_id, config=None, team_id=1):
@@ -84,12 +84,12 @@ class Robot:
         self.neighbours = {}
         
         # Init PID controller
-        # PID output limits in motor units (MAX_SPEED is in cm/s, motor units are 100x)
+        # PID output limits in motor units (MAX_SPEED is in m/s, 0.12 m/s = 1200 motor units)
         self.PID_heading = PID(
             Kp=self.KP,
             Ki=self.KI,
             Kd=self.KD,
-            output_limits=(-self.MAX_SPEED * 100, self.MAX_SPEED * 100)
+            output_limits=(-self.MAX_SPEED * 10000, self.MAX_SPEED * 10000)
         )
         
         self.current_state = State.RANDOM_WALK
@@ -297,9 +297,13 @@ class Robot:
         return res_vec
     
     
-    def get_robot_repulsion_vector(self, ids):
+    def get_robot_repulsion_vector(self, msgs):
         res_vec = Vector2D(0,0)
         counter = 0
+        
+        ids = []
+        for msg in msgs:
+            ids.append(str(msg.id))
         
         for key, value in self.neighbours.items():
             if key in ids:
@@ -315,15 +319,14 @@ class Robot:
                 
         if counter > 0:
             res_vec /= counter
+        
+        # Normalize to MAX_SPEED if magnitude exceeds it
+        magnitude = abs(res_vec)
+        if magnitude > self.MAX_SPEED:
+            res_vec = res_vec.normalize() * self.MAX_SPEED
             
         return res_vec
-    
-    def get_obstacle_repulsion_vector(self):
-        res_vec = Vector2D(0,0)
 
-        # TODO: Repel from the boundary of the arena
-
-        return res_vec
 
     def _boundary_local_components(self):
         curr_x = self.position.x
@@ -378,12 +381,10 @@ class Robot:
         
         all_msgs = self.team_msgs + self.other_msgs
         
-        # for msg in all_msgs:
-        #     if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
-        #         return self.get_robot_repulsion_vector(all_msgs)
+        for msg in all_msgs:
+            if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
+                return self.get_robot_repulsion_vector(all_msgs)
             
-        # TODO: Get proximity sensor readings -> rely on distance to neighbor
-
         def _normalize_angle(angle):
             return math.atan2(math.sin(angle), math.cos(angle))
 
@@ -418,10 +419,10 @@ class Robot:
 
             if local_y > 0:
                 print(f"Boundary detected on LEFT side of robot")
-                turn_sign = -1.0
+                turn_sign = 1.0
             elif local_y < 0:
                 print(f"Boundary detected on RIGHT side of robot")
-                turn_sign = 1.0
+                turn_sign = -1.0
             else:
                 turn_sign = 1.0
 
@@ -445,30 +446,15 @@ class Robot:
         
         base_speed = min(heading_length, self.MAX_SPEED)
 
-        if self.turning_mechanism == self.HARD_TURN:
-            if abs(heading_angle) <= self.SOFT_TURN_ON_ANGLE_THRESHOLD:
-                self.turning_mechanism = self.SOFT_TURN
-        elif self.turning_mechanism == self.SOFT_TURN:
-            if abs(heading_angle) > self.HARD_TURN_ON_ANGLE_THRESHOLD:
-                self.turning_mechanism = self.HARD_TURN
-            elif abs(heading_angle) <= self.NO_TURN_ANGLE_THRESHOLD:
-                self.turning_mechanism = self.NO_TURN
-        elif self.turning_mechanism == self.NO_TURN:
-            if abs(heading_angle) > self.HARD_TURN_ON_ANGLE_THRESHOLD:
-                self.turning_mechanism = self.HARD_TURN
-            elif abs(heading_angle) > self.NO_TURN_ANGLE_THRESHOLD:
-                self.turning_mechanism = self.SOFT_TURN
+        # Smooth turning: scale wheel speeds continuously by heading angle
+        max_angle = math.pi / 2
+        speed_factor = (max_angle - abs(heading_angle)) / max_angle
+        speed1 = base_speed + base_speed * (1.0 - speed_factor)
+        speed2 = base_speed - base_speed * (1.0 - speed_factor)
 
-        if self.turning_mechanism == self.NO_TURN:
-            speed1 = base_speed
-            speed2 = base_speed
-        elif self.turning_mechanism == self.SOFT_TURN:
-            speed_factor = (self.HARD_TURN_ON_ANGLE_THRESHOLD - abs(heading_angle)) / self.HARD_TURN_ON_ANGLE_THRESHOLD
-            speed1 = base_speed - base_speed * (1.0 - speed_factor)
-            speed2 = base_speed + base_speed * (1.0 - speed_factor)
-        else:
-            speed1 = -self.MAX_SPEED
-            speed2 = self.MAX_SPEED
+        # Clamp to valid speed range
+        speed1 = max(-self.MAX_SPEED, min(self.MAX_SPEED, speed1))
+        speed2 = max(-self.MAX_SPEED, min(self.MAX_SPEED, speed2))
         
         if(heading_angle > 0):
             # Turn left
@@ -479,13 +465,13 @@ class Robot:
             left  = speed2
             right = speed1
         
-        print(f'Robot {self.id}: Setting speeds - left={left:.2f}, right={right:.2f} (base={base_speed:.2f}, mechanism={self.turning_mechanism})')
+        # print(f'Robot {self.id}: Setting speeds - left={left:.2f}, right={right:.2f} (base={base_speed:.2f}, mechanism={self.turning_mechanism})')
         
-        # Convert from cm/s to motor units (12 cm/s = 1200 motor units)
-        left = left * 100
-        right = right * 100
+        # Convert from m/s to motor units (0.12 m/s = 1200 motor units)
+        left = left * 10000
+        right = right * 10000
         
-        print(f'Robot {self.id}: Motor units - left={left:.0f}, right={right:.0f}')
+        # print(f'Robot {self.id}: Motor units - left={left:.0f}, right={right:.0f}')
             
         return left, right
     
