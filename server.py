@@ -414,7 +414,7 @@ class Tracker(threading.Thread):
             
             (raw_tags, tag_ids, rejected) = cv2.aruco.detectMarkers(image, aruco_dictionary, parameters=aruco_parameters)
 
-            # self.robots = {} # Clear dictionary every frame in case robots have disappeared
+            self.robots = {} # Clear dictionary every frame in case robots have disappeared
 
             # Check whether any tags were detected in this camera frame
             if tag_ids is not None and len(tag_ids.tolist()) > 0:
