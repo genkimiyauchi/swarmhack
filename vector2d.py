@@ -67,3 +67,14 @@ class Vector2D:
     def to_polar(self):
         """Return the vector's components in polar coordinates."""
         return self.__abs__(), math.atan2(self.y, self.x)
+
+    def rotate(self, angle):
+        """Rotate the vector by the specified angle (Radians)"""
+        fsin = math.sin(angle)
+        fcos = math.cos(angle)
+        x = self.x * fcos - self.y * fsin
+        y = self.x * fsin + self.y * fcos
+        return Vector2D(x, y)
+    
+    def normalize(self):
+        return self / self.__abs__()

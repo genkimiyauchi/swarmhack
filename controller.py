@@ -4,6 +4,12 @@ from simple_pid import PID
 from vector2d import Vector2D
 from message import Message
 from colorama import Fore
+import random
+
+TICK_DURATION = 0.1 # Duration of each tick in seconds
+
+INTERWHEEL_DISTANCE = 0.053 # Distance between the two wheels of the e-puck in meters
+HALF_INTERWHEEL_DISTANCE = INTERWHEEL_DISTANCE / 2
 
 class State(Enum):
     RANDOM_WALK = 0  # Random walk
@@ -26,9 +32,15 @@ class Robot:
     # Battery percentage might be a better
     BAT_LOW_VOLTAGE = 3.6
 
-    # Firmware on both robots accepts wheel velocities between -100 and 100.
-    # This limits the controller to fit within that.
-    MAX_SPEED = 100
+    # Firmware on both robots accepts wheel velocities between -1000 and 1000.
+    # MAX_SPEED is specified in cm/s and converted to motor units (×100) when sending commands
+    MAX_SPEED = 10.0 # Default value in cm/s (10 cm/s = 1000 motor units)
+    HARD_TURN = 0
+    SOFT_TURN = 1
+    NO_TURN = 2
+    HARD_TURN_ON_ANGLE_THRESHOLD = math.radians(90)
+    SOFT_TURN_ON_ANGLE_THRESHOLD = math.radians(70)
+    NO_TURN_ANGLE_THRESHOLD = math.radians(10)
     
     
     @classmethod
@@ -36,17 +48,24 @@ class Robot:
     
         for param in config[0]:
             print(param.tag)
-            if param.tag == 'target_tracking':
+            if param.tag == "wheel_turning":
+                cls.MAX_SPEED = float(param.get("max_speed"))
+                global MAX_SPEED
+                MAX_SPEED = cls.MAX_SPEED
+                cls.HARD_TURN_ON_ANGLE_THRESHOLD = math.radians(float(param.get("hard_turn_angle_threshold")))
+                cls.SOFT_TURN_ON_ANGLE_THRESHOLD = math.radians(float(param.get("soft_turn_angle_threshold")))
+                cls.NO_TURN_ANGLE_THRESHOLD = math.radians(float(param.get("no_turn_angle_threshold")))
+            elif param.tag == "target_tracking":
                 cls.KP = 10 # TODO: Read from xml file
                 cls.KI = 0 # TODO: Read from xml file
                 cls.KD = 0 # TODO: Read from xml file
                 cls.THRES_RANGE = 5 # TODO: Read from xml file
-            elif param.tag == 'flocking':
+            elif param.tag == "flocking":
                 cls.TARGET_DISTANCE_WALK = 20 # TODO: Read from xml file
                 cls.TARGET_DISTANCE_TARGET = 8 # TODO: Read from xml file
                 cls.GAIN = 1000 # TODO: Read from xml file
                 cls.EXPONENT = 6 # TODO: Read from xml file
-            elif param.tag == 'motion':
+            elif param.tag == "motion":
                 cls.MIN_RANDOM_WALK_ROTATION_ANGLE = 15 # TODO: Read from xml file
                 cls.MAX_RANDOM_WALK_ROTATION_ANGLE = 90 # TODO: Read from xml file
                 cls.BROADCAST_DURATION = 4 # TODO: Read from xml file
@@ -58,20 +77,23 @@ class Robot:
         self.connection = None
         
         self.teleop = False
+        self.left = self.right = 0
         
+        self.position = Vector2D(0,0)
         self.orientation = 0
         self.neighbours = {}
         
         # Init PID controller
-
+        # PID output limits in motor units (MAX_SPEED is in cm/s, motor units are 100x)
         self.PID_heading = PID(
             Kp=self.KP,
             Ki=self.KI,
             Kd=self.KD,
-            output_limits=(-self.MAX_SPEED, self.MAX_SPEED)
+            output_limits=(-self.MAX_SPEED * 100, self.MAX_SPEED * 100)
         )
         
         self.current_state = State.RANDOM_WALK
+        self.turning_mechanism = self.NO_TURN
         
         self.led_colour = 'blue'
         
@@ -86,11 +108,14 @@ class Robot:
         self.in_target = False
         self.target_found = False
         self.target_received = False
-        self.random_walk_timer = 0
         self.broadcast_timer = 0
+        self.rotation_remaining = 0.0
+        self.last_orientation = None
         
         self.target = Vector2D(1000,1000) # Large default value when target position not set
 
+        self.arena_limits = [] # max x and y coordinates of the arena, to be set by the user
+        self.arena_margin_threshold = 0.1 # deffault 10% margin from the arena boundary to start repelling from it
 
     # Repulsion
     def generalized_lennard_jones_repulsion_walk(self, distance):
@@ -104,7 +129,7 @@ class Robot:
     
     
     def control_step(self):
-        print(Fore.LIGHTCYAN_EX + f'--- Robot {self.id} ---')
+        print(Fore.LIGHTCYAN_EX + f'--- Robot {self.id} --- state: {self.current_state} ---')
 
         self.reset_variables()
         
@@ -112,7 +137,7 @@ class Robot:
         
         # TODO: Get global position and orientation
         
-        if self.target != Vector2D(1000,1000):
+        if self.target.x != 1000 and self.target.y != 1000:
             # TODO: self.dist_to_target = 
             pass
 
@@ -122,7 +147,7 @@ class Robot:
             if not self.in_target:
                 # Check if neighboring robots have found the target
                 for msg in self.team_msgs:
-                    if msg.target_position != Vector2D(1000,1000):
+                    if msg.target_position.x != 1000 and msg.target_position.y != 1000:
                         self.target = msg.target_position
                         self.target_received = True
                         break
@@ -130,10 +155,12 @@ class Robot:
             if self.in_target or self.target_received:
                 self.current_state = State.BROADCAST_WALK
                 self.number_of_blinks = 30
-                self.broadcast_timer = int(self.BROADCAST_DURATION / 0.1) # 0.1 seconds per tick
+                self.broadcast_timer = int(self.BROADCAST_DURATION / TICK_DURATION)
                 self.blink_interval = 5
                 self.blink_timer = 0
                 self.target_found = True
+                print("State -> BROADCAST_WALK")
+                print(f"in_target {self.in_target}, target_received {self.target_received}")
                 
         elif self.current_state == State.BROADCAST_WALK:
             
@@ -142,14 +169,17 @@ class Robot:
             
             if not self.teleop and self.broadcast_timer <= 0:
                 self.current_state = State.BROADCAST_HOMING
+                print("State -> BROADCAST_HOMING")
             elif self.teleop and self.move_to_target:
                 self.current_state = State.BROADCAST_HOMING
+                print("State -> BROADCAST_HOMING")
                 
         elif self.current_state == State.BROADCAST_HOMING:
             
             # Move towards target
             if self.in_target:
                 self.current_state = State.IN_TARGET
+                print("State -> IN_TARGET")
                 
         elif self.current_state == State.IN_TARGET:
             
@@ -214,8 +244,8 @@ class Robot:
             # Follow the control vector
             # TODO: eight directions
             pass
-        elif abs(motion_vector) > self.MAX_SPEED / 100:
-            self.left, self.right = self.set_wheel_speeds(motion_vector) # TODO: pick set_wheel_speeds() that returns left and right
+        elif abs(motion_vector) > self.MAX_SPEED / 10:
+            self.left, self.right = self.set_wheel_speeds_from_vector(motion_vector)
         else:
             self.left, self.right = 0, 0
             
@@ -294,29 +324,117 @@ class Robot:
         # TODO: Repel from the boundary of the arena
 
         return res_vec
+
+    def _boundary_local_components(self):
+        curr_x = self.position.x
+        curr_y = self.position.y
+
+        print(f"curr_x: {curr_x}, curr_y: {curr_y}")
+
+        min_x = self.arena_limits["min_x"]
+        min_y = self.arena_limits["min_y"]
+        max_x = self.arena_limits["max_x"]
+        max_y = self.arena_limits["max_y"]
+        margin_x = self.arena_margin_threshold * (max_x - min_x)
+        margin_y = self.arena_margin_threshold * (max_y - min_y)
+
+        boundary_collision = (
+            curr_x < min_x + margin_x
+            or curr_x > max_x - margin_x
+            or curr_y < min_y + margin_y
+            or curr_y > max_y - margin_y
+        )
+
+        if not boundary_collision:
+            return False, 0, 0
+
+        # Calculate repulsion vector in global coordinates (weighted by proximity)
+        global_repulsion = Vector2D(0, 0)
+
+        dist_left = curr_x - min_x
+        dist_right = max_x - curr_x
+        dist_bottom = curr_y - min_y
+        dist_top = max_y - curr_y
+
+        if dist_left < margin_x:
+            global_repulsion.x += (margin_x - dist_left) / margin_x
+        if dist_right < margin_x:
+            global_repulsion.x -= (margin_x - dist_right) / margin_x
+        if dist_bottom < margin_y:
+            global_repulsion.y += (margin_y - dist_bottom) / margin_y
+        if dist_top < margin_y:
+            global_repulsion.y -= (margin_y - dist_top) / margin_y
+
+        # Transform global repulsion vector to robot's local frame
+        orientation_rad = math.radians(self.orientation)
+        local_x = global_repulsion.x * math.cos(-orientation_rad) - global_repulsion.y * math.sin(-orientation_rad)
+        local_y = global_repulsion.x * math.sin(-orientation_rad) + global_repulsion.y * math.cos(-orientation_rad)
+
+        return True, local_x, local_y
     
     
     def random_walk(self):
-        
-        # Decrement timer
-        self.random_walk_timer -= 1
+        res_vec = Vector2D(0,0)
         
         all_msgs = self.team_msgs + self.other_msgs
         
-        for msg in all_msgs:
-            if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
-                return self.get_robot_repulsion_vector(all_msgs)
+        # for msg in all_msgs:
+        #     if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
+        #         return self.get_robot_repulsion_vector(all_msgs)
             
         # TODO: Get proximity sensor readings -> rely on distance to neighbor
 
-        if self.random_walk_timer <= 0:
-            length_left = length_right = -1
-            index = 0
-            
-            # TODO
+        def _normalize_angle(angle):
+            return math.atan2(math.sin(angle), math.cos(angle))
+
+        current_heading = math.radians(self.orientation)
+        if self.last_orientation is None:
+            self.last_orientation = current_heading
+
+        if abs(self.rotation_remaining) > 1e-6:
+            delta = _normalize_angle(current_heading - self.last_orientation)
+            # Always reduce the absolute value of rotation_remaining
+            self.rotation_remaining -= math.copysign(abs(delta), self.rotation_remaining)
+            self.last_orientation = current_heading
+
+            if abs(self.rotation_remaining) <= math.radians(2):
+                self.rotation_remaining = 0.0
+            else:
+                turn_sign = 1.0 if self.rotation_remaining > 0 else -1.0
+                res_vec = Vector2D(0, self.MAX_SPEED if turn_sign > 0 else -self.MAX_SPEED)
+                print(f"Rotating: remaining={math.degrees(self.rotation_remaining)}")
+                print(f"Rotation delta={math.degrees(delta)} heading={math.degrees(current_heading)}")
+                print(f"res_vec: {res_vec}")
+                return res_vec
+
+        # Identify if any arena is violated
+        boundary_collision, local_x, local_y = self._boundary_local_components()
+        print(f"boundary_collision={boundary_collision} local_x={local_x} local_y={local_y}")
+
+        if boundary_collision and local_x < 0:
+            # local_y > 0 means boundary is on the left, local_y < 0 means boundary is on the right
+            random_angle = random.uniform(self.MIN_RANDOM_WALK_ROTATION_ANGLE, self.MAX_RANDOM_WALK_ROTATION_ANGLE)
+            random_angle_rad = math.radians(random_angle)
+
+            if local_y > 0:
+                print(f"Boundary detected on LEFT side of robot")
+                turn_sign = -1.0
+            elif local_y < 0:
+                print(f"Boundary detected on RIGHT side of robot")
+                turn_sign = 1.0
+            else:
+                turn_sign = 1.0
+
+            self.rotation_remaining = turn_sign * abs(random_angle_rad)
+            self.last_orientation = current_heading
+            res_vec = Vector2D(0, self.MAX_SPEED if turn_sign > 0 else -self.MAX_SPEED)
+        else:
+            # Move forward when not near any boundary
+            res_vec = Vector2D(self.MAX_SPEED, 0)
     
-        return Vector2D(0,0)
-    
+        print(f"res_vec: {res_vec}")
+        return res_vec
+
     
     def set_wheel_speeds_from_vector(self, vector):
         heading_angle = math.atan2(vector.y, vector.x)
@@ -325,9 +443,32 @@ class Robot:
         print('angle: {}'.format(heading_angle))
         print('length: {}'.format(heading_length))
         
-        speed_factor = (1.57 - abs(heading_angle)) / 1.57
-        speed1 = self.MAX_SPEED + self.MAX_SPEED * (1.0 - speed_factor)
-        speed2 = self.MAX_SPEED - self.MAX_SPEED * (1.0 - speed_factor)
+        base_speed = min(heading_length, self.MAX_SPEED)
+
+        if self.turning_mechanism == self.HARD_TURN:
+            if abs(heading_angle) <= self.SOFT_TURN_ON_ANGLE_THRESHOLD:
+                self.turning_mechanism = self.SOFT_TURN
+        elif self.turning_mechanism == self.SOFT_TURN:
+            if abs(heading_angle) > self.HARD_TURN_ON_ANGLE_THRESHOLD:
+                self.turning_mechanism = self.HARD_TURN
+            elif abs(heading_angle) <= self.NO_TURN_ANGLE_THRESHOLD:
+                self.turning_mechanism = self.NO_TURN
+        elif self.turning_mechanism == self.NO_TURN:
+            if abs(heading_angle) > self.HARD_TURN_ON_ANGLE_THRESHOLD:
+                self.turning_mechanism = self.HARD_TURN
+            elif abs(heading_angle) > self.NO_TURN_ANGLE_THRESHOLD:
+                self.turning_mechanism = self.SOFT_TURN
+
+        if self.turning_mechanism == self.NO_TURN:
+            speed1 = base_speed
+            speed2 = base_speed
+        elif self.turning_mechanism == self.SOFT_TURN:
+            speed_factor = (self.HARD_TURN_ON_ANGLE_THRESHOLD - abs(heading_angle)) / self.HARD_TURN_ON_ANGLE_THRESHOLD
+            speed1 = base_speed - base_speed * (1.0 - speed_factor)
+            speed2 = base_speed + base_speed * (1.0 - speed_factor)
+        else:
+            speed1 = -self.MAX_SPEED
+            speed2 = self.MAX_SPEED
         
         if(heading_angle > 0):
             # Turn left
@@ -337,6 +478,14 @@ class Robot:
             # Turn right
             left  = speed2
             right = speed1
+        
+        print(f'Robot {self.id}: Setting speeds - left={left:.2f}, right={right:.2f} (base={base_speed:.2f}, mechanism={self.turning_mechanism})')
+        
+        # Convert from cm/s to motor units (12 cm/s = 1200 motor units)
+        left = left * 100
+        right = right * 100
+        
+        print(f'Robot {self.id}: Motor units - left={left:.0f}, right={right:.0f}')
             
         return left, right
     
