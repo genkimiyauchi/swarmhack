@@ -269,12 +269,14 @@ class Tracker(threading.Thread):
                 if id != other_id:  # Don't check this robot against itself
 
                     range = robot.position.distance_to(other_robot.position)
+                    
+                    if range < robot.sensor_range:
 
-                    absolute_bearing = math.degrees(math.atan2(other_robot.position.y - robot.position.y,
-                                                               other_robot.position.x - robot.position.x))
-                    relative_bearing = absolute_bearing - robot.orientation
-                    normalised_bearing = angles.normalize(relative_bearing, -180, 180)
-                    robot.neighbours[other_id] = SensorReading(range, normalised_bearing, other_robot.orientation)
+                        absolute_bearing = math.degrees(math.atan2(other_robot.position.y - robot.position.y,
+                                                                other_robot.position.x - robot.position.x))
+                        relative_bearing = absolute_bearing - robot.orientation
+                        normalised_bearing = angles.normalize(relative_bearing, -180, 180)
+                        robot.neighbours[other_id] = SensorReading(range, normalised_bearing, other_robot.orientation)
 
 
 
@@ -302,6 +304,10 @@ class Tracker(threading.Thread):
             cv2.line(image, (tag.tr.x, tag.tr.y), (tag.br.x, tag.br.y), green, 1, lineType=cv2.LINE_AA)
             cv2.line(image, (tag.br.x, tag.br.y), (tag.bl.x, tag.bl.y), green, 1, lineType=cv2.LINE_AA)
             cv2.line(image, (tag.bl.x, tag.bl.y), (tag.tl.x, tag.tl.y), green, 1, lineType=cv2.LINE_AA)
+
+            # Draw sensing range as circle
+            range_radius_px = int(robot.sensor_range * self.scale_factor)
+            cv2.circle(image, (tag.centre.x, tag.centre.y), range_radius_px, cyan, 1, lineType=cv2.LINE_AA)
 
             # Draw circle on centre point
             cv2.circle(image, (tag.centre.x, tag.centre.y), 5, red, -1, lineType=cv2.LINE_AA)
