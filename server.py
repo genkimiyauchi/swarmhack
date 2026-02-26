@@ -338,10 +338,14 @@ class Tracker(threading.Thread):
     """
     def drawInitRobotPositions(self, image):
         global robot_info
-        for robot in robot_info:
+        for id, robot in robot_info.items():
+
+            # Skip if robot tag not currently detected
+            if robot["id"] not in self.robots:
+                continue
 
             # Get tag
-            tag = self.robots[robot['id']].tag
+            tag = self.robots[robot["id"]].tag
 
             # Draw circle on centre point (more transparent)
             overlay = image.copy()
@@ -469,11 +473,30 @@ async def handler(websocket):
                 reply["awake"] = True
                 send_reply = True
 
+            if "get_arena_limits" in message:
+                min_x_m = tracker.min_x / tracker.scale_factor
+                min_y_m = tracker.min_y / tracker.scale_factor
+                max_x_m = tracker.max_x / tracker.scale_factor
+                max_y_m = tracker.max_y / tracker.scale_factor
+                print(
+                    "tracker arena limits (meters): "
+                    f"min_x={round(min_x_m, 2)}, min_y={round(min_y_m, 2)}, "
+                    f"max_x={round(max_x_m, 2)}, max_y={round(max_y_m, 2)}"
+                )
+                reply["arena_limits"] = {
+                    "min_x": round(min_x_m, 2),
+                    "min_y": round(min_y_m, 2),
+                    "max_x": round(max_x_m, 2),
+                    "max_y": round(max_y_m, 2),
+                }
+                send_reply = True
+
             if "get_robots" in message:
                 send_reply = True
                 for id, robot in tracker.robots.items():
 
                     reply[id] = {}
+                    reply[id]["position"] = {"x": round(robot.position.x, 2), "y": round(robot.position.y, 2)}
                     reply[id]["orientation"] = round(robot.orientation, 2)
                     reply[id]["players"] = {}
                     reply[id]["remaining_time"] = int(tracker.timer.time_left)
