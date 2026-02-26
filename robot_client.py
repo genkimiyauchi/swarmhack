@@ -182,6 +182,7 @@ async def send_commands(robot):
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
         message["set_motor_speeds"]["right"] = right
+        message["set_leds_colour"] = robot.led_colour
         
         print(f'Robot {robot.id}: Sending to motors - left={left:.0f}, right={right:.0f}')
 
@@ -465,6 +466,8 @@ if __name__ == "__main__":
         if robots[robot_id] != '':
             active_robots[robot_id] = Robot(robot_id)
             active_robots[robot_id].arena_limits = ARENA_LIMITS
+            active_robots[robot_id].target = TARGET_POS
+            active_robots[robot_id].target_radius = TARGET_RADIUS
             print(f"Initialised {robot_id}")
         else:
             print(f"No IP defined for robot {robot_id}")

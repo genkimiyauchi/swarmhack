@@ -113,6 +113,9 @@ class Robot:
         self.last_orientation = None
         
         self.target = Vector2D(1000,1000) # Large default value when target position not set
+        self.target_radius = 0.0
+        self.dist_to_target = float('inf')
+        self.in_target = False
 
         self.arena_limits = [] # max x and y coordinates of the arena, to be set by the user
         self.arena_margin_threshold = 0.1 # deffault 10% margin from the arena boundary to start repelling from it
@@ -135,11 +138,15 @@ class Robot:
         
         self.get_messages()
         
-        # TODO: Get global position and orientation
-        
         if self.target.x != 1000 and self.target.y != 1000:
-            # TODO: self.dist_to_target = 
-            pass
+            # Transform target from arena-local to global coordinates
+            global_target = Vector2D(
+                self.target.x + self.arena_limits["min_x"],
+                self.target.y + self.arena_limits["min_y"]
+            )
+            self.dist_to_target = self.position.distance_to(global_target)
+            self.in_target = self.dist_to_target <= self.target_radius
+        print(f"target {self.target}, in_target {self.in_target}")
 
         if self.current_state == State.RANDOM_WALK:
             self.target_received = False

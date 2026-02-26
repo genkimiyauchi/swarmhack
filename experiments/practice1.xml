@@ -52,7 +52,7 @@
   <!-- *********************** -->
   <arena>
     
-    <target position="0,0,0" radius="0.25" />
+    <target position="0.5,0.5,0" radius="0.25" />
     
     <e-puck id="1" position="0.5,0.5,0" orientation="0,0,0" />
     <e-puck id="20" position="0.6,0.6,0" orientation="0,0,0" />
