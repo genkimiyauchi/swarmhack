@@ -79,6 +79,8 @@ class Robot:
         self.teleop = False
         self.teleop_left = 0
         self.teleop_right = 0
+        self.teleop_last_command = None  # Track last teleop command
+        self.teleop_last_command_time = 0  # Timestamp of last teleop command
         self.move_to_target = False  # For teleop mode: whether to move to target
         self.share_target = False  # For teleop mode: whether to share target with others
         self.left = self.right = 0

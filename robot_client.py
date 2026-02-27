@@ -178,6 +178,15 @@ async def send_commands(robot):
         # Determine motor speeds based on experiment state and teleop mode
         if robot.teleop and experiment_running:
             # Teleop mode (only if experiment is running) - use teleop commands
+            
+            # Check if we should timeout and revert to forward motion
+            # If no command received in 0.3 seconds, go forward automatically
+            if (robot.teleop_last_command in ["left", "right"] and 
+                time.time() - robot.teleop_last_command_time > 0.3):
+                # Timeout - revert to forward motion
+                robot.teleop_left = 800
+                robot.teleop_right = 800
+            
             left = robot.teleop_left
             right = robot.teleop_right
         elif experiment_running:
@@ -412,6 +421,10 @@ async def listen_teleop_messages():
                     elif robot.teleop and experiment_running:
                         # Robot always moves forward unless turning
                         # Only left/right turns are controlled
+                        # Track command and timestamp for auto-forward behavior
+                        robot.teleop_last_command = command
+                        robot.teleop_last_command_time = time.time()
+                        
                         if command == "left":
                             # Turn left on the spot
                             robot.teleop_left = -600
