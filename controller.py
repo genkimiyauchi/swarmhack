@@ -77,6 +77,10 @@ class Robot:
         self.connection = None
         
         self.teleop = False
+        self.teleop_left = 0
+        self.teleop_right = 0
+        self.move_to_target = False  # For teleop mode: whether to move to target
+        self.share_target = False  # For teleop mode: whether to share target with others
         self.left = self.right = 0
         
         self.position = Vector2D(0,0)

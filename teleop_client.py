@@ -87,8 +87,12 @@ def on_message(ws, message):
 
 
 def on_error(ws, error):
-    print()
-    print("Websocket error:", error)
+    print("\n" + "="*70)
+    print("Websocket connection error:")
+    print(f"  {type(error).__name__}: {error}")
+    print("="*70)
+    print("Make sure teleop_server.py is running!")
+    print("Run: python teleop_server.py")
 
 
 def on_close(ws, close_status_code, close_msg):
@@ -97,6 +101,8 @@ def on_close(ws, close_status_code, close_msg):
 
 
 def on_open(ws):
+    print("Connected to teleop server! ✓\n")
+    
     def run(*args):
         settings = saveTerminalSettings()
         pub_thread = PublishThread(ws)
@@ -125,6 +131,9 @@ def on_open(ws):
 
 
 if __name__ == "__main__":
+    print("Starting teleop client...")
+    print("Connecting to teleop server at ws://localhost:7000/")
+    print("(This may take a moment...)\n")
 
     host = "ws://localhost:7000/"
 
@@ -134,4 +143,8 @@ if __name__ == "__main__":
                                   on_error=on_error,
                                   on_close=on_close)
     webs.on_open = on_open
-    webs.run_forever()
+    try:
+        webs.run_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        webs.close()

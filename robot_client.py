@@ -8,6 +8,7 @@ import json
 import signal
 import time
 import sys
+import threading
 from enum import Enum
 import time
 import random
@@ -152,12 +153,13 @@ async def send_commands(robot):
 
         message = {}
 
-        # Controller step
-        try:
-            robot.control_step()
-        except Exception as e:
-            print(Fore.LIGHTRED_EX + f'============= Error occurred =============')
-            traceback.print_exc()
+        # Controller step - only run if experiment is active
+        if experiment_running:
+            try:
+                robot.control_step()
+            except Exception as e:
+                print(Fore.LIGHTRED_EX + f'============= Error occurred =============')
+                traceback.print_exc()
 
         """
         Construct a command message
@@ -173,11 +175,19 @@ async def send_commands(robot):
 
         You can combine commands (i.e. setting both wheels and the LED colour in one go)
         """
-        if robot.teleop:
-            left = right = 0 # TODO: Default to not moving
-        else:
+        # Determine motor speeds based on experiment state and teleop mode
+        if robot.teleop and experiment_running:
+            # Teleop mode (only if experiment is running) - use teleop commands
+            left = robot.teleop_left
+            right = robot.teleop_right
+        elif experiment_running:
+            # Experiment running - use autonomous control
             left = robot.left
             right = robot.right
+        else:
+            # Experiment not yet started - stop motors
+            left = 0
+            right = 0
 
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
@@ -187,7 +197,25 @@ async def send_commands(robot):
         print(f'Robot {robot.id}: Sending to motors - left={left:.0f}, right={right:.0f}')
 
         # Send command message
-        await robot.connection.send(json.dumps(message))
+        try:
+            await robot.connection.send(json.dumps(message))
+        except Exception as e:
+            print(f"send_commands: {type(e).__name__}: {e}")
+            # Attempt to reconnect
+            try:
+                ip = robots[robot.id]
+                uri = f"ws://{ip}:{robot_port}"
+                print(f"Attempting to reconnect to robot {robot.id} at {uri}")
+                robot.connection = await websockets.connect(uri)
+                awake = await check_awake(robot.connection)
+                if awake:
+                    print(f"Robot {robot.id} reconnected successfully")
+                    # Retry sending the command
+                    await robot.connection.send(json.dumps(message))
+                else:
+                    print(f"Robot {robot.id} reconnection check failed")
+            except Exception as reconnect_error:
+                print(f"Failed to reconnect to robot {robot.id}: {type(reconnect_error).__name__}: {reconnect_error}")
 
     except Exception as e:
         print(f"send_commands: {type(e).__name__}: {e}")
@@ -213,7 +241,33 @@ if len(server_address) == 0:
                     f"then re-run this script.")
 
 server_connection = None
+teleop_connection = None
+teleop_enabled = True  # Set to False to disable teleop integration
+teleop_address = "localhost"
+teleop_port = 7000
+experiment_running = False  # Set to True to start the experiment
 colorama.init(autoreset=True)
+
+
+# Background task to listen for keyboard input to start experiment
+def start_input_listener():
+    """Start a background thread to listen for keyboard input to start the experiment"""
+    
+    def input_thread():
+        global experiment_running
+        while not __kill_now:
+            try:
+                user_input = input()
+                if user_input.lower() in ['s', 'start', '']:
+                    experiment_running = True
+                    print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Robots are now active\n")
+            except EOFError:
+                break
+            except Exception as e:
+                pass
+    
+    thread = threading.Thread(target=input_thread, daemon=True)
+    thread.start()
 
 
 # Handle Ctrl+C termination
@@ -294,6 +348,89 @@ async def check_awake(connection):
         print(f"{type(e).__name__}: {e}")
 
     return awake
+
+
+# Connect to teleop server for manual control
+async def connect_to_teleop():
+    if not teleop_enabled:
+        print(Fore.YELLOW + "[INFO]: Teleop support disabled")
+        return
+    
+    try:
+        global teleop_connection
+        uri = f"ws://{teleop_address}:{teleop_port}"
+        print(Fore.GREEN + f"[INFO]: Connecting to teleop server at {uri}")
+        
+        # Add timeout to prevent hanging if server not running
+        try:
+            teleop_connection = await asyncio.wait_for(
+                websockets.connect(uri),
+                timeout=3.0
+            )
+        except asyncio.TimeoutError:
+            print(Fore.YELLOW + f"[WARNING]: Teleop server connection timed out (server not running?)")
+            return
+        
+        # Register as a control client
+        await teleop_connection.send(json.dumps({"register": "control"}))
+        print(Fore.GREEN + f"[INFO]: ✓ Connected to teleop server")
+        
+        # Start background task to listen for teleop messages
+        loop = asyncio.get_event_loop()
+        loop.create_task(listen_teleop_messages())
+        
+    except Exception as e:
+        print(Fore.YELLOW + f"[WARNING]: Could not connect to teleop server")
+        print(Fore.YELLOW + f"  {type(e).__name__}: {e}")
+        print(Fore.YELLOW + f"  Teleop control will not be available")
+
+
+# Background task to listen for teleop control messages
+async def listen_teleop_messages():
+    global teleop_connection
+    try:
+        async for packet in teleop_connection:
+            message = json.loads(packet)
+            
+            if "teleop_control" in message:
+                robot_id = message["robot_id"]
+                command = message["command"]
+                
+                if robot_id in active_robots:
+                    robot = active_robots[robot_id]
+                    
+                    if command == "select":
+                        robot.teleop = True
+                        print(f"Robot {robot_id}: Teleop control ENABLED")
+                        
+                    elif command == "release":
+                        robot.teleop = False
+                        robot.teleop_left = 0
+                        robot.teleop_right = 0
+                        print(f"Robot {robot_id}: Teleop control DISABLED")
+                        
+                    elif robot.teleop and experiment_running:
+                        # Robot always moves forward unless turning
+                        # Only left/right turns are controlled
+                        if command == "left":
+                            # Turn left on the spot
+                            robot.teleop_left = -600
+                            robot.teleop_right = 600
+                        elif command == "right":
+                            # Turn right on the spot
+                            robot.teleop_left = 600
+                            robot.teleop_right = -600
+                        elif command == "stop":
+                            # Stop both wheels
+                            robot.teleop_left = 0
+                            robot.teleop_right = 0
+                        else:
+                            # Any other command (forward, backward, etc) - default to forward
+                            robot.teleop_left = 800
+                            robot.teleop_right = 800
+                            
+    except Exception as e:
+        print(f"Teleop listener error: {type(e).__name__}: {e}")
 
 
 # Ask a list of robot IDs for all their sensor data (proximity + battery)
@@ -479,6 +616,21 @@ if __name__ == "__main__":
     if not active_robots:
         print(Fore.RED + "[ERROR]: No connection to robots")
         sys.exit(1)
+
+    # Connect to teleop server for manual control
+    print(Fore.GREEN + "[INFO]: Connecting to teleop server")
+    loop.run_until_complete(connect_to_teleop())
+
+    # Start input listener for experiment control
+    start_input_listener()
+    
+    # Display start message
+    print("\n" + "="*70)
+    print(Fore.YELLOW + "EXPERIMENT READY - All robots connected")
+    print(Fore.YELLOW + "="*70)
+    print(Fore.CYAN + "Press 's' or Enter to START the experiment")
+    print(Fore.CYAN + "Press Ctrl+C to QUIT")
+    print("="*70 + "\n")
 
     # Only communicate with robots that were successfully connected to
     while True:
