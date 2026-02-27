@@ -53,29 +53,35 @@ robot_ids = ROBOTS
 def main_loop():
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
     # This is stored in the global variable active_robots, a map of id -> instances of the Robot class (defined lower in this file) 
-    print(Fore.GREEN + "[INFO]: Requesting data from tracking server")
+    if experiment_running:
+        print(Fore.GREEN + "[INFO]: Requesting data from tracking server")
     loop.run_until_complete(get_server_data())
 
     # Request sensor data from detected robots
     # This augments the Robot instances with their battery level and the values from each robot's proximity sensors
     # You only need to do this if you care about their battery level, or are using their proximity sensors
-    print(Fore.GREEN + "[INFO]: Robots detected:", ids)
-    print(Fore.GREEN + "[INFO]: Requesting data from detected robots")
+    if experiment_running:
+        print(Fore.GREEN + "[INFO]: Robots detected:", ids)
+        print(Fore.GREEN + "[INFO]: Requesting data from detected robots")
     loop.run_until_complete(get_robot_data(ids))
 
     # Exchange messages with neighbouring robots
-    print(Fore.GREEN + "[INFO]: Collecting messages from neighbouring robots")
+    if experiment_running:
+        print(Fore.GREEN + "[INFO]: Collecting messages from neighbouring robots")
     local_communication()
 
     # Now run our behaviour
-    print(Fore.GREEN + "[INFO]: Sending commands to detected robots")
+    if experiment_running:
+        print(Fore.GREEN + "[INFO]: Sending commands to detected robots")
     loop.run_until_complete(send_robot_commands(ids))
 
     # Send experiment info to server
-    print(Fore.GREEN + "[INFO]: Sending data to tracking server")
+    if experiment_running:
+        print(Fore.GREEN + "[INFO]: Sending data to tracking server")
     loop.run_until_complete(send_experiment_info())
 
-    print()
+    if experiment_running:
+        print()
 
     # Sleep until next control cycle. We use 0.1 seconds by default so as to not flood the network.
     time.sleep(0.1)
@@ -203,7 +209,8 @@ async def send_commands(robot):
         message["set_motor_speeds"]["right"] = right
         message["set_leds_colour"] = robot.led_colour
         
-        print(f'Robot {robot.id}: Sending to motors - left={left:.0f}, right={right:.0f}')
+        if experiment_running:
+            print(f'Robot {robot.id}: Sending to motors - left={left:.0f}, right={right:.0f}')
 
         # Send command message
         try:
