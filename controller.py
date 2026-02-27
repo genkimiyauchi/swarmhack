@@ -293,13 +293,24 @@ class Robot:
                 
                 
     def get_attraction_vector(self):
-        # TODO:
-        
-        # Get current global position
         
         res_vec = Vector2D(0,0)
         
-        # TODO
+        # Transform target from arena-local to global coordinates
+        global_target = Vector2D(
+            self.target.x + self.arena_limits["min_x"],
+            self.target.y + self.arena_limits["min_y"]
+        )
+    
+        # Calculate a normalized vector that points to the next target
+        res_vec = global_target - self.position
+        
+        # Transform to robot's local frame by rotating by negative heading
+        orientation_rad = math.radians(self.orientation)
+        res_vec = res_vec.rotate(-orientation_rad)
+    
+        if abs(res_vec) > 0:
+            res_vec = res_vec.normalize() * self.MAX_SPEED
         
         return res_vec
     
