@@ -397,7 +397,7 @@ class Tracker(threading.Thread):
             # get radius in pixels
             radius = int(target["radius"] * self.scale_factor)
             
-            cv2.circle(overlay, (cx, cy), radius, magenta, -1, lineType=cv2.LINE_AA)
+            cv2.circle(overlay, (cx, cy), radius, (191, 255, 191), -1, lineType=cv2.LINE_AA)
             image[:] = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
 
 
