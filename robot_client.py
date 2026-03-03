@@ -386,14 +386,16 @@ def start_keyboard_listener():
         print(Fore.CYAN + "KEYBOARD CONTROLS:")
         if initializing:
             print(Fore.CYAN + "  Robots are initializing to their starting positions...")
-            print(Fore.CYAN + "  Press 's' to start experiment (after robots reach init positions)")
+            print(Fore.CYAN + "  Press 's' to start experiment (after robots reach init positions)\n")
         else:
-            print(Fore.CYAN + "  Press 's' to start experiment")
+            print(Fore.CYAN + "  Press 's' to start experiment\n")
         if teleop_enabled:
             print(Fore.CYAN + f"  Available robot IDs: {valid_robots}")
-            print(Fore.CYAN + "  Press digits (e.g. 1, 2, 20) then Enter to select robot")
+            print(Fore.CYAN + "  Press digits (e.g. 1, 2, 20) then Enter to select robot\n")
             print(Fore.CYAN + "  Press 'a' to turn left (while controlling a robot)")
             print(Fore.CYAN + "  Press 'd' to turn right (while controlling a robot)")
+            print(Fore.CYAN + "  Press '1' to share target (while controlling a robot and target found)")
+            print(Fore.CYAN + "  Press '2' to move to target (while controlling a robot and target shared)\n")
             print(Fore.CYAN + "  Press 'q' to release robot control")
         print(Fore.CYAN + "  Press Ctrl+C to exit")
         print(Fore.CYAN + "="*70 + "\n")
