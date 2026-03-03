@@ -29,6 +29,9 @@ grey = (100, 100, 100)
 target_info = {}
 robot_info = {}
 
+INIT_POSITION_TIMEOUT = 2.0  # Stop drawing init positions if no update for 2 seconds
+last_robot_info_update = 0  # Timestamp of last received robot_info
+
 GAME_TIME = 5 * 60
 # random.seed(1)
 
@@ -434,8 +437,13 @@ class Tracker(threading.Thread):
                 self.timer.update()
                 self.drawRobots(image)
                 
-                if len(robot_info) > 0:
+                # Only draw init positions if we're currently receiving them
+                current_time = time.time()
+                if len(robot_info) > 0 and (current_time - last_robot_info_update) < INIT_POSITION_TIMEOUT:
                     self.drawInitRobotPositions(image)
+                elif len(robot_info) > 0 and (current_time - last_robot_info_update) >= INIT_POSITION_TIMEOUT:
+                    # Clear robot_info if we haven't received an update in a while
+                    robot_info = {}
                     
                 if len(target_info) > 0:
                     self.drawTargets(image)
@@ -521,8 +529,9 @@ async def handler(websocket):
                 target_info = message["targets"]
 
             if "robots" in message:
-                global robot_info
+                global robot_info, last_robot_info_update
                 robot_info = message["robots"]
+                last_robot_info_update = time.time()
 
             # Send reply, if requested
             if send_reply:
