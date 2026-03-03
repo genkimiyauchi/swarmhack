@@ -59,7 +59,7 @@ main_loop() using loop.run_until_complete(async_thing_to_run(ids))
 robot_ids = ROBOTS
 
 def main_loop():
-    global simulation_time, experiment_running, experiment_finished
+    global simulation_time, experiment_running, experiment_finished, targets_updated
     
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
     # This is stored in the global variable active_robots, a map of id -> instances of the Robot class (defined lower in this file) 
@@ -96,6 +96,14 @@ def main_loop():
     # Increment simulation time if experiment is running
     if experiment_running:
         simulation_time += ITERATION_TIME
+        
+        # Update targets to TARGET_POS after delay
+        if not targets_updated and simulation_time >= TARGET_DELAY:
+            print(Fore.CYAN + f"\n[TARGET UPDATE] Setting robot targets to TARGET_POS after {TARGET_DELAY}s delay\n")
+            for robot_id in active_robots:
+                active_robots[robot_id].target = TARGET_POS
+                active_robots[robot_id].target_radius = TARGET_RADIUS
+            targets_updated = True
         
         # Check for timeout
         if simulation_time >= EXPERIMENT_TIMEOUT:
@@ -298,6 +306,8 @@ experiment_running = False  # Set to True to start the experiment
 experiment_finished = False  # Set to True when experiment finishes (timeout)
 simulation_time = 0.0  # Simulation time in seconds, starts when experiment begins
 EXPERIMENT_TIMEOUT = 60.0  # Experiment timeout in seconds (simulation time)
+TARGET_DELAY = 3.0  # Delay in simulation seconds before setting actual target
+targets_updated = False  # Track whether targets have been updated to TARGET_POS
 colorama.init(autoreset=True)
 
 _stdin_fd = None
@@ -408,13 +418,14 @@ def start_keyboard_listener():
                     if key.lower() == 's' and initializing and not experiment_running:
                         initializing = False
                         experiment_running = True
-                        global simulation_time
+                        global simulation_time, targets_updated
                         simulation_time = 0.0  # Reset simulation time when experiment starts
-                        # Reset robots to initial state and main experiment target
+                        targets_updated = False  # Reset target update flag
+                        # Set robots to placeholder target (will update to TARGET_POS after delay)
                         for robot_id in active_robots:
-                            active_robots[robot_id].target = TARGET_POS
-                            active_robots[robot_id].target_radius = TARGET_RADIUS
-                        print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Main experiment is now active\n")
+                            active_robots[robot_id].target = Vector2D(1000, 1000)
+                            active_robots[robot_id].target_radius = 0.0
+                        print(Fore.YELLOW + f"\n[EXPERIMENT STARTED] - Targets will be set after {TARGET_DELAY}s\n")
                     elif key.lower() == 's' and not initializing and not experiment_running:
                         experiment_running = True
                         print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Robots are now active\n")
@@ -650,7 +661,7 @@ async def get_data(robot):
 # Send experiment info to the server to be visualised
 async def send_experiment_info():
 
-    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished
+    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished, targets_updated
 
     message = {"robots": {}, "targets": []}
     
@@ -665,12 +676,13 @@ async def send_experiment_info():
             }
             message["robots"][id] = robot_info
 
-    # send target position and radius to the server for visualisation
-    target_info = {
-        "position": {"x": TARGET_POS.x, "y": TARGET_POS.y},
-        "radius": TARGET_RADIUS
-    }
-    message["targets"].append(target_info)
+    # Send target position and radius only after TARGET_DELAY has passed
+    if targets_updated:
+        target_info = {
+            "position": {"x": TARGET_POS.x, "y": TARGET_POS.y},
+            "radius": TARGET_RADIUS
+        }
+        message["targets"].append(target_info)
 
     # Include simulation time from robot_client
     message["simulation_time"] = simulation_time
@@ -717,8 +729,6 @@ if __name__ == "__main__":
         if robots[robot_id] != '':
             active_robots[robot_id] = Robot(robot_id)
             active_robots[robot_id].arena_limits = ARENA_LIMITS
-            active_robots[robot_id].target = TARGET_POS
-            active_robots[robot_id].target_radius = TARGET_RADIUS
             
             # Set initialization target to the robot's init position from XML
             if robot_id in ROBOT_INIT_POS:
