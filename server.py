@@ -369,6 +369,9 @@ class Tracker(threading.Thread):
     def drawTargets(self, image):
         global target_info
         for target in target_info:
+            # Only draw target if show_target flag is True
+            if not target.get("show_target", False):
+                continue
 
             # Draw circle on centre point (more transparent)
             overlay = image.copy()
