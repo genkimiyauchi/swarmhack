@@ -100,15 +100,19 @@ class Timer:
         time_seconds -- Time remaining in seconds (float)
         """
         self.current_time = time_seconds
-        # if time_seconds <= 0:
-        #     self.status = TimerStatus.COMPLETE
-        # else:
-        #     self.status = TimerStatus.STARTED
+
+    def set_complete(self, is_complete):
+        if is_complete:
+            self.status = TimerStatus.COMPLETE
+        else:
+            self.status = TimerStatus.STARTED
     
     def start(self):
         self.status = TimerStatus.STARTED
     
     def getColor(self):
+        if self.status == TimerStatus.COMPLETE:
+            return red
         return white
 
     def getString(self):
@@ -507,6 +511,9 @@ async def handler(websocket):
             
             if "simulation_time" in message:
                 tracker.timer.set_time(message["simulation_time"])
+
+            if "experiment_finished" in message:
+                tracker.timer.set_complete(message["experiment_finished"])
 
             # Send reply, if requested
             if send_reply:
