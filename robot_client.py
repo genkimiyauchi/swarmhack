@@ -319,6 +319,7 @@ if len(server_address) == 0:
 server_connection = None
 teleop_enabled = True  # Set to False to disable teleop integration
 teleop_robot_id = None  # Currently controlled robot ID
+teleop_target_shown_once = False  # Track if target has been shown at least once for current teleop robot
 initializing = True  # Robots move to init positions before experiment
 experiment_running = False  # Set to True to start the experiment
 experiment_finished = False  # Set to True when experiment finishes (timeout)
@@ -376,7 +377,7 @@ def start_keyboard_listener():
     """Start a background thread to listen for keyboard input"""
     
     def keyboard_thread():
-        global experiment_running, teleop_robot_id, initializing
+        global experiment_running, teleop_robot_id, initializing, teleop_target_shown_once
         valid_robots = sorted(active_robots.keys())
 
         configure_terminal_input_mode()
@@ -400,9 +401,10 @@ def start_keyboard_listener():
         digit_buffer = ""
 
         def select_robot(robot_id):
-            global teleop_robot_id
+            global teleop_robot_id, teleop_target_shown_once
             if robot_id in active_robots:
                 teleop_robot_id = robot_id
+                teleop_target_shown_once = False  # Reset when switching to new robot
                 robot = active_robots[robot_id]
                 robot.teleop = True
                 robot.teleop_left = 800
@@ -458,6 +460,7 @@ def start_keyboard_listener():
                             robot.teleop_right = 0
                             print(Fore.YELLOW + f"\n[TELEOP] Released control of robot {teleop_robot_id}\n")
                             teleop_robot_id = None
+                            teleop_target_shown_once = False  # Reset when releasing control
                         
                         # Turn left
                         elif key.lower() == 'a' and teleop_robot_id is not None:
@@ -695,7 +698,7 @@ async def get_data(robot):
 # Send experiment info to the server to be visualised
 async def send_experiment_info():
 
-    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished, targets_updated
+    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished, targets_updated, teleop_robot_id, teleop_target_shown_once
 
     message = {"robots": {}, "targets": []}
     
@@ -712,9 +715,24 @@ async def send_experiment_info():
 
     # Send target position and radius only after TARGET_DELAY has passed
     if targets_updated:
+        # Determine show_target based on whether a robot is being teleop'd
+        if teleop_robot_id is not None and teleop_robot_id in active_robots:
+            # Check if teleop robot has found or received the target
+            target_condition_met = active_robots[teleop_robot_id].in_target or active_robots[teleop_robot_id].target_received
+            
+            # Once the condition is met, keep showing target (sticky)
+            if target_condition_met:
+                teleop_target_shown_once = True
+            
+            show_target = teleop_target_shown_once
+        else:
+            # No teleop, always show target when targets_updated is True
+            show_target = True
+        
         target_info = {
             "position": {"x": TARGET_POS.x, "y": TARGET_POS.y},
-            "radius": TARGET_RADIUS
+            "radius": TARGET_RADIUS,
+            "show_target": show_target
         }
         message["targets"].append(target_info)
 
