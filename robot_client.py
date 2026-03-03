@@ -59,13 +59,14 @@ main_loop() using loop.run_until_complete(async_thing_to_run(ids))
 robot_ids = ROBOTS
 
 def main_loop():
-    global simulation_time, experiment_running, experiment_finished, targets_updated
+    global simulation_time, experiment_running, experiment_finished, targets_updated, all_robots_in_target_time
     
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
     # This is stored in the global variable active_robots, a map of id -> instances of the Robot class (defined lower in this file) 
     if experiment_running:
         print(Fore.GREEN + "[INFO]: Requesting data from tracking server")
     loop.run_until_complete(get_server_data())
+    loop.run_until_complete(get_in_target_data())
 
     # Request sensor data from detected robots
     # This augments the Robot instances with their battery level and the values from each robot's proximity sensors
@@ -104,6 +105,21 @@ def main_loop():
                 active_robots[robot_id].target = TARGET_POS
                 active_robots[robot_id].target_radius = TARGET_RADIUS
             targets_updated = True
+        
+        # Check if all robots are in target
+        if robots_in_target == len(active_robots):
+            all_robots_in_target_time += ITERATION_TIME
+            if all_robots_in_target_time >= 3.0:
+                print(Fore.GREEN + f"\n[TASK COMPLETE] All robots in target for 3 seconds. Stopping experiment.\n")
+                experiment_running = False
+                experiment_finished = True
+                # Turn off LEDs for all robots
+                for robot_id in active_robots:
+                    active_robots[robot_id].led_colour = 'off'
+                loop.run_until_complete(stop_robots(robot_ids))
+        else:
+            # Reset counter if not all robots are in target
+            all_robots_in_target_time = 0.0
         
         # Check for timeout
         if simulation_time >= EXPERIMENT_TIMEOUT:
@@ -286,6 +302,8 @@ async def send_commands(robot):
 
 active_robots = {} 
 ids = []
+robots_in_target = 0
+all_robots_in_target_time = 0.0  # Time all robots have been in target
 
 
 # Server address, port details, globals
@@ -624,6 +642,22 @@ async def get_server_data():
 
     except Exception as e:
         print(f"get_server_data: {type(e).__name__}: {e}")
+
+
+async def get_in_target_data():
+    try:
+        global robots_in_target
+        message = {"get_in_target": True}
+
+        await server_connection.send(json.dumps(message))
+        reply_json = await server_connection.recv()
+        reply = json.loads(reply_json)
+
+        if "get_in_target" in reply:
+            robots_in_target = reply["get_in_target"].get("robots_in_target", 0)
+
+    except Exception as e:
+        print(f"get_in_target_data: {type(e).__name__}: {e}")
 
 
 # Stop robot from moving and turn off its LEDs
