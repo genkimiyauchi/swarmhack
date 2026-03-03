@@ -382,6 +382,33 @@ class Tracker(threading.Thread):
             image[:] = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
 
 
+    def drawRobotsInTargetCount(self, image):
+        global target_info
+
+        total_robots = len(self.robots)
+        robots_in_target = 0
+
+        if total_robots > 0 and len(target_info) > 0:
+            target = target_info[0]
+            target_cx = self.min_x + int(target["position"]["x"] * self.scale_factor)
+            target_cy = self.min_y + int(target["position"]["y"] * self.scale_factor)
+            target_radius_px = int(target["radius"] * self.scale_factor)
+
+            for robot in self.robots.values():
+                tag = robot.tag
+                if math.dist([tag.centre.x, tag.centre.y], [target_cx, target_cy]) <= target_radius_px:
+                    robots_in_target += 1
+
+        text = f"Number of robots in target: {robots_in_target}/{total_robots}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 2
+        thickness = 5
+        position = (520, 60)
+
+        cv2.putText(image, text, position, font, font_scale, white, thickness * 3, cv2.LINE_AA)
+        cv2.putText(image, text, position, font, font_scale, black, thickness, cv2.LINE_AA)
+
+
     def run(self):
         
         global robot_info, target_info
@@ -425,12 +452,14 @@ class Tracker(threading.Thread):
                 if len(target_info) > 0:
                     self.drawTargets(image)
 
+                self.drawRobotsInTargetCount(image)
+
                 text = f"Time: {self.timer.getString()}"
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 2
                 thickness = 5
                 textsize = cv2.getTextSize(text, font, font_scale, thickness)[0]
-                position = (790, 60)
+                position = (20, 60)
                 cv2.putText(image, text, position, font, font_scale, self.timer.getColor(), thickness * 3, cv2.LINE_AA)
                 cv2.putText(image, text, position, font, font_scale, black, thickness, cv2.LINE_AA)
 
