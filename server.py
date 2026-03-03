@@ -382,7 +382,7 @@ class Tracker(threading.Thread):
             image[:] = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
 
 
-    def drawRobotsInTargetCount(self, image):
+    def getRobotsInTargetCount(self):
         global target_info
 
         total_robots = len(self.robots)
@@ -398,6 +398,12 @@ class Tracker(threading.Thread):
                 tag = robot.tag
                 if math.dist([tag.centre.x, tag.centre.y], [target_cx, target_cy]) <= target_radius_px:
                     robots_in_target += 1
+
+        return robots_in_target, total_robots
+
+
+    def drawRobotsInTargetCount(self, image):
+        robots_in_target, total_robots = self.getRobotsInTargetCount()
 
         text = f"Number of robots in target: {robots_in_target}/{total_robots}"
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -528,6 +534,13 @@ async def handler(websocket):
                         reply[id]["players"][neighbour_id]["range"] = round(neighbour.range, 2)
                         reply[id]["players"][neighbour_id]["bearing"] = round(neighbour.bearing, 2)
                         reply[id]["players"][neighbour_id]["orientation"] = round(neighbour.orientation, 2)
+
+            if "get_in_target" in message:
+                robots_in_target, _ = tracker.getRobotsInTargetCount()
+                reply["get_in_target"] = {
+                    "robots_in_target": robots_in_target,
+                }
+                send_reply = True
 
             if "targets" in message:
                 global target_info
