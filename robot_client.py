@@ -9,6 +9,7 @@ import signal
 import time
 import sys
 import threading
+import atexit
 from enum import Enum
 import time
 import random
@@ -166,8 +167,15 @@ async def send_commands(robot):
 
         message = {}
 
-        # Controller step - only run if experiment is active
-        if experiment_running:
+        # During initialization phase, use simple movement toward init position
+        if initializing:
+            try:
+                robot.initialization_step()
+            except Exception as e:
+                print(Fore.LIGHTRED_EX + f'============= Error during initialization =============')
+                traceback.print_exc()
+        # During experiment, use full control_step with state machine
+        elif experiment_running:
             try:
                 robot.control_step()
             except Exception as e:
@@ -188,7 +196,7 @@ async def send_commands(robot):
 
         You can combine commands (i.e. setting both wheels and the LED colour in one go)
         """
-        # Determine motor speeds based on experiment state and teleop mode
+        # Determine motor speeds based on initialization/experiment state and teleop mode
         if robot.teleop and experiment_running:
             # Teleop mode (only if experiment is running) - use teleop commands
             
@@ -202,8 +210,8 @@ async def send_commands(robot):
             
             left = robot.teleop_left
             right = robot.teleop_right
-        elif experiment_running:
-            # Experiment running - use autonomous control
+        elif initializing or experiment_running:
+            # Initialization or experiment running - use autonomous control
             left = robot.left
             right = robot.right
         else:
@@ -266,24 +274,51 @@ if len(server_address) == 0:
 server_connection = None
 teleop_enabled = True  # Set to False to disable teleop integration
 teleop_robot_id = None  # Currently controlled robot ID
+initializing = True  # Robots move to init positions before experiment
 experiment_running = False  # Set to True to start the experiment
 colorama.init(autoreset=True)
 
+_stdin_fd = None
+_saved_terminal_settings = None
+
 
 # Cross-platform keyboard reading functions
+def configure_terminal_input_mode():
+    """Put terminal into cbreak mode with echo enabled for keyboard listening (Linux/WSL)."""
+    global _stdin_fd, _saved_terminal_settings
+    if sys.platform != 'win32' and _saved_terminal_settings is None:
+        _stdin_fd = sys.stdin.fileno()
+        _saved_terminal_settings = termios.tcgetattr(_stdin_fd)
+        tty.setcbreak(_stdin_fd)
+        # Enable echo while in cbreak mode
+        attrs = termios.tcgetattr(_stdin_fd)
+        attrs[3] |= termios.ECHO  # c_lflag (index 3) - enable ECHO flag
+        termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, attrs)
+
+
+def restore_terminal_input_mode():
+    """Restore terminal settings so shell echo/input behave normally after exit."""
+    global _stdin_fd, _saved_terminal_settings
+    if sys.platform != 'win32' and _saved_terminal_settings is not None:
+        try:
+            termios.tcsetattr(_stdin_fd, termios.TCSADRAIN, _saved_terminal_settings)
+        except Exception:
+            pass
+        finally:
+            _stdin_fd = None
+            _saved_terminal_settings = None
+
+
+# Always restore terminal when process exits
+atexit.register(restore_terminal_input_mode)
+
+
 def getKey():
     """Get a single keypress from the terminal"""
     if sys.platform == 'win32':
         return msvcrt.getwch()
     else:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setcbreak(fd)
-            key = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return key
+        return sys.stdin.read(1)
 
 
 # Background task to listen for keyboard input for experiment start and teleop
@@ -291,12 +326,18 @@ def start_keyboard_listener():
     """Start a background thread to listen for keyboard input"""
     
     def keyboard_thread():
-        global experiment_running, teleop_robot_id
+        global experiment_running, teleop_robot_id, initializing
         valid_robots = sorted(active_robots.keys())
+
+        configure_terminal_input_mode()
         
         print(Fore.CYAN + "\n" + "="*70)
         print(Fore.CYAN + "KEYBOARD CONTROLS:")
-        print(Fore.CYAN + "  Press 's' to start experiment")
+        if initializing:
+            print(Fore.CYAN + "  Robots are initializing to their starting positions...")
+            print(Fore.CYAN + "  Press 's' to start experiment (after robots reach init positions)")
+        else:
+            print(Fore.CYAN + "  Press 's' to start experiment")
         if teleop_enabled:
             print(Fore.CYAN + f"  Available robot IDs: {valid_robots}")
             print(Fore.CYAN + "  Press digits (e.g. 1, 2, 20) then Enter to select robot")
@@ -321,63 +362,74 @@ def start_keyboard_listener():
             else:
                 print(Fore.YELLOW + f"\n[TELEOP] Robot {robot_id} not connected. Available: {valid_robots}\n")
         
-        while not __kill_now:
-            try:
-                key = getKey()
+        try:
+            while not __kill_now:
+                try:
+                    key = getKey()
 
-                # In raw mode Ctrl+C is read as a character; convert to normal shutdown signal
-                if key == '\x03':
-                    signal.raise_signal(signal.SIGINT)
-                    continue
+                    # In some terminals Ctrl+C may still appear as a character
+                    if key == '\x03':
+                        signal.raise_signal(signal.SIGINT)
+                        continue
 
-                # Build robot ID from digits, commit on Enter
-                if key.isdigit():
-                    digit_buffer += key
-                    continue
-                if key in ('\r', '\n') and digit_buffer:
-                    robot_id = int(digit_buffer)
-                    digit_buffer = ""
-                    select_robot(robot_id)
-                    continue
+                    # Build robot ID from digits, commit on Enter
+                    if key.isdigit():
+                        digit_buffer += key
+                        continue
+                    if key in ('\r', '\n') and digit_buffer:
+                        robot_id = int(digit_buffer)
+                        digit_buffer = ""
+                        select_robot(robot_id)
+                        continue
                 
-                # Start experiment
-                if key.lower() == 's' and not experiment_running:
-                    experiment_running = True
-                    print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Robots are now active\n")
+                    # Start experiment
+                    if key.lower() == 's' and initializing and not experiment_running:
+                        initializing = False
+                        experiment_running = True
+                        # Reset robots to initial state and main experiment target
+                        for robot_id in active_robots:
+                            active_robots[robot_id].target = TARGET_POS
+                            active_robots[robot_id].target_radius = TARGET_RADIUS
+                        print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Main experiment is now active\n")
+                    elif key.lower() == 's' and not initializing and not experiment_running:
+                        experiment_running = True
+                        print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Robots are now active\n")
 
-                # Teleop controls
-                elif teleop_enabled:
-                    # Release control
-                    if key.lower() == 'q' and teleop_robot_id is not None:
-                        robot = active_robots[teleop_robot_id]
-                        robot.teleop = False
-                        robot.teleop_left = 0
-                        robot.teleop_right = 0
-                        print(Fore.YELLOW + f"\n[TELEOP] Released control of robot {teleop_robot_id}\n")
-                        teleop_robot_id = None
+                    # Teleop controls
+                    elif teleop_enabled:
+                        # Release control
+                        if key.lower() == 'q' and teleop_robot_id is not None:
+                            robot = active_robots[teleop_robot_id]
+                            robot.teleop = False
+                            robot.teleop_left = 0
+                            robot.teleop_right = 0
+                            print(Fore.YELLOW + f"\n[TELEOP] Released control of robot {teleop_robot_id}\n")
+                            teleop_robot_id = None
+                        
+                        # Turn left
+                        elif key.lower() == 'a' and teleop_robot_id is not None:
+                            robot = active_robots[teleop_robot_id]
+                            if robot.teleop:
+                                robot.teleop_last_command = "left"
+                                robot.teleop_last_command_time = time.time()
+                                robot.teleop_left = -600
+                                robot.teleop_right = 600
+                        
+                        # Turn right
+                        elif key.lower() == 'd' and teleop_robot_id is not None:
+                            robot = active_robots[teleop_robot_id]
+                            if robot.teleop:
+                                robot.teleop_last_command = "right"
+                                robot.teleop_last_command_time = time.time()
+                                robot.teleop_left = 600
+                                robot.teleop_right = -600
                     
-                    # Turn left
-                    elif key.lower() == 'a' and teleop_robot_id is not None:
-                        robot = active_robots[teleop_robot_id]
-                        if robot.teleop:
-                            robot.teleop_last_command = "left"
-                            robot.teleop_last_command_time = time.time()
-                            robot.teleop_left = -600
-                            robot.teleop_right = 600
-                    
-                    # Turn right
-                    elif key.lower() == 'd' and teleop_robot_id is not None:
-                        robot = active_robots[teleop_robot_id]
-                        if robot.teleop:
-                            robot.teleop_last_command = "right"
-                            robot.teleop_last_command_time = time.time()
-                            robot.teleop_left = 600
-                            robot.teleop_right = -600
-                
-            except Exception as e:
-                if not __kill_now:
-                    print(Fore.YELLOW + f"[WARNING]: Keyboard listener error: {type(e).__name__}: {e}")
-                    time.sleep(0.05)
+                except Exception as e:
+                    if not __kill_now:
+                        print(Fore.YELLOW + f"[WARNING]: Keyboard listener error: {type(e).__name__}: {e}")
+                        time.sleep(0.05)
+        finally:
+            restore_terminal_input_mode()
     
     thread = threading.Thread(target=keyboard_thread, daemon=True)
     thread.start()
@@ -395,6 +447,7 @@ def __set_kill_now(signum, frame):
     print('\nReceived signal:', SIGNALS_TO_NAMES_DICT[signum], str(signum))
     global __kill_now
     __kill_now = True
+    restore_terminal_input_mode()
 
 signal.signal(signal.SIGINT, __set_kill_now)
 signal.signal(signal.SIGTERM, __set_kill_now)
@@ -578,14 +631,16 @@ async def send_experiment_info():
 
     message = {"robots": {}, "targets": []}
     
-    # send init robot position ROBOT_INIT_POS and orientation ROBOT_INIT_ANGLE to the server for visualisation
-    for id in ROBOTS:
-        robot_info = {
-            "id": id,
-            "initial_position": {"x": ROBOT_INIT_POS[id].x, "y": ROBOT_INIT_POS[id].y},
-            "initial_orientation": ROBOT_INIT_ANGLE[id]
-        }
-        message["robots"][id] = robot_info
+    # Send init robot positions only during initialization phase
+    if initializing:
+        # send init robot position ROBOT_INIT_POS and orientation ROBOT_INIT_ANGLE to the server for visualisation
+        for id in ROBOTS:
+            robot_info = {
+                "id": id,
+                "initial_position": {"x": ROBOT_INIT_POS[id].x, "y": ROBOT_INIT_POS[id].y},
+                "initial_orientation": ROBOT_INIT_ANGLE[id]
+            }
+            message["robots"][id] = robot_info
 
     # send target position and radius to the server for visualisation
     target_info = {
@@ -635,7 +690,20 @@ if __name__ == "__main__":
             active_robots[robot_id].arena_limits = ARENA_LIMITS
             active_robots[robot_id].target = TARGET_POS
             active_robots[robot_id].target_radius = TARGET_RADIUS
-            print(f"Initialised {robot_id}")
+            
+            # Set initialization target to the robot's init position from XML
+            if robot_id in ROBOT_INIT_POS:
+                init_pos = ROBOT_INIT_POS[robot_id]
+                # Keep explicit global init target so offset is handled consistently while moving
+                active_robots[robot_id].init_target = Vector2D(init_pos.x, init_pos.y)
+                # Set target orientation if available
+                if robot_id in ROBOT_INIT_ANGLE:
+                    active_robots[robot_id].init_angle = ROBOT_INIT_ANGLE[robot_id]
+                    print(f"Initialised robot {robot_id} - init target: ({init_pos.x:.2f}, {init_pos.y:.2f}), angle: {math.degrees(ROBOT_INIT_ANGLE[robot_id]):.1f}°")
+                else:
+                    print(f"Initialised robot {robot_id} - init target: ({init_pos.x:.2f}, {init_pos.y:.2f})")
+            else:
+                print(f"Initialised {robot_id}")
         else:
             print(f"No IP defined for robot {robot_id}")
 
@@ -647,8 +715,14 @@ if __name__ == "__main__":
         print(Fore.RED + "[ERROR]: No connection to robots")
         sys.exit(1)
 
+    # Set initial targets for robot initialization phase
+    for robot_id in active_robots:
+        if active_robots[robot_id].init_target is not None:
+            active_robots[robot_id].target = active_robots[robot_id].init_target
+            print(Fore.GREEN + f"[INIT] Robot {robot_id} will move to initial position")
+
     # Start keyboard listener for experiment control and teleop
-    print(Fore.YELLOW + "\n[READY] All robots connected")
+    print(Fore.YELLOW + "\n[READY] All robots connected - Initialization phase starting")
     start_keyboard_listener()
     # Only communicate with robots that were successfully connected to
     while True:

@@ -122,6 +122,8 @@ class Robot:
         self.target_radius = 0.0
         self.dist_to_target = float('inf')
         self.in_target = False
+        self.init_target = None  # Initial position target during setup phase
+        self.init_angle = None  # Target orientation in radians during setup phase
 
         self.arena_limits = [] # max x and y coordinates of the arena, to be set by the user
         self.arena_margin_threshold = 0.1 # deffault 10% margin from the arena boundary to start repelling from it
@@ -209,7 +211,12 @@ class Robot:
             elif self.current_state == State.BROADCAST_HOMING or self.current_state == State.IN_TARGET:
                 
                 # Move towards target
-                target_force = self.get_attraction_vector()
+                # Transform target from arena-local to global coordinates
+                global_target = Vector2D(
+                    self.target.x + self.arena_limits["min_x"],
+                    self.target.y + self.arena_limits["min_y"]
+                )
+                target_force = self.get_attraction_vector(global_target)
                 
                 if self.current_state == State.IN_TARGET:
                     # Reduce attraction from the target center as it gets closer to it
@@ -298,18 +305,21 @@ class Robot:
                 self.other_msgs.append(msg)
                 
                 
-    def get_attraction_vector(self):
+    def get_attraction_vector(self, target_vector):
+        """
+        Calculate a normalized motion vector pointing toward target_vector.
         
+        Args:
+            target_vector: Target position in global coordinates (Vector2D)
+            
+        Returns:
+            Motion vector in robot's local frame, scaled to MAX_SPEED
+        """
         res_vec = Vector2D(0,0)
-        
-        # Transform target from arena-local to global coordinates
-        global_target = Vector2D(
-            self.target.x + self.arena_limits["min_x"],
-            self.target.y + self.arena_limits["min_y"]
-        )
     
         # Calculate a normalized vector that points to the next target
-        res_vec = global_target - self.position
+        # target_vector is already in global coordinates
+        res_vec = target_vector - self.position
         
         # Transform to robot's local frame by rotating by negative heading
         orientation_rad = math.radians(self.orientation)
@@ -319,6 +329,64 @@ class Robot:
             res_vec = res_vec.normalize() * self.MAX_SPEED
         
         return res_vec
+    
+
+    def initialization_step(self):
+        """
+        Move to init position during setup phase using vector-based control,
+        then rotate on the spot to match the target orientation.
+        """
+        if self.init_target is None:
+            return
+        
+        # Transform target from arena-local to global coordinates
+        target_global = Vector2D(
+            self.init_target.x + self.arena_limits["min_x"],
+            self.init_target.y + self.arena_limits["min_y"]
+        )
+        
+        # Calculate distance to init target
+        dist_to_init = self.position.distance_to(target_global)
+        
+        # Phase 1: Move to position
+        INIT_DISTANCE_THRESHOLD = 0.04
+        if dist_to_init >= INIT_DISTANCE_THRESHOLD:
+            # Get motion vector toward init target
+            motion_vector = self.get_attraction_vector(target_global)
+            
+            # Only move if vector magnitude is above threshold
+            if abs(motion_vector) > self.MAX_SPEED / 10:
+                self.left, self.right = self.set_wheel_speeds_from_vector(motion_vector)
+            else:
+                self.left, self.right = 0, 0
+            return
+        
+        # Phase 2: Position reached, now rotate to match target orientation if specified
+        if self.init_angle is not None:
+            # Normalize angles to [-pi, pi]
+            target_angle = math.atan2(math.sin(self.init_angle), math.cos(self.init_angle))
+            current_angle = math.atan2(math.sin(math.radians(self.orientation)), math.cos(math.radians(self.orientation)))
+            angle_diff = math.atan2(math.sin(target_angle - current_angle), math.cos(target_angle - current_angle))
+            
+            # Threshold for orientation alignment
+            ANGLE_THRESHOLD = math.radians(5.0)
+            if abs(angle_diff) > ANGLE_THRESHOLD:
+                # Rotate on the spot
+                # Positive angle_diff means turn left, negative means turn right
+                rotation_speed = self.MAX_SPEED / 10
+                if angle_diff > 0:
+                    self.left, self.right = rotation_speed * 10000, -rotation_speed * 10000
+                else:
+                    self.left, self.right = -rotation_speed * 10000, rotation_speed * 10000
+            else:
+                # Orientation reached
+                self.left, self.right = 0, 0
+                # print(f"Robot {self.id}: Reached init position and orientation")
+        else:
+            # No target orientation specified, just stop
+            self.left, self.right = 0, 0
+            # print(f"Robot {self.id}: Reached init position")
+
     
     
     def get_robot_repulsion_vector(self, msgs):
@@ -465,8 +533,8 @@ class Robot:
         heading_angle = math.atan2(vector.y, vector.x)
         heading_length = abs(vector)
         
-        print('angle: {}'.format(heading_angle))
-        print('length: {}'.format(heading_length))
+        # print('angle: {}'.format(heading_angle))
+        # print('length: {}'.format(heading_length))
         
         base_speed = min(heading_length, self.MAX_SPEED)
 
