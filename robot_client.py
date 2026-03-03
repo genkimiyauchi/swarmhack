@@ -240,8 +240,8 @@ async def send_commands(robot):
         You can combine commands (i.e. setting both wheels and the LED colour in one go)
         """
         # Determine motor speeds based on initialization/experiment state and teleop mode
-        if robot.teleop and experiment_running:
-            # Teleop mode (only if experiment is running) - use teleop commands
+        if robot.teleop and not robot.move_to_target and experiment_running:
+            # Teleop mode (only if experiment is running and not moving to target) - use teleop commands
             
             # Check if we should timeout and revert to forward motion
             # If no command received in 0.3 seconds, go forward automatically
@@ -424,6 +424,18 @@ def start_keyboard_listener():
                         signal.raise_signal(signal.SIGINT)
                         continue
 
+                    # Share target command: press '1' to share target if already teleoping and target found
+                    if key == '1' and teleop_robot_id is not None and teleop_target_shown_once:
+                        active_robots[teleop_robot_id].share_target = True
+                        print(Fore.GREEN + f"\n[TELEOP] Robot {teleop_robot_id} is now sharing target\n")
+                        continue
+
+                    # Move to target command: press '2' to move to target if share_target is already enabled
+                    if key == '2' and teleop_robot_id is not None and active_robots[teleop_robot_id].share_target:
+                        active_robots[teleop_robot_id].move_to_target = True
+                        print(Fore.GREEN + f"\n[TELEOP] Robot {teleop_robot_id} is now moving to target\n")
+                        continue
+
                     # Build robot ID from digits, commit on Enter
                     if key.isdigit():
                         digit_buffer += key
@@ -451,7 +463,7 @@ def start_keyboard_listener():
                         print(Fore.YELLOW + "\n[EXPERIMENT STARTED] - Robots are now active\n")
 
                     # Teleop controls
-                    elif teleop_enabled:
+                    elif teleop_enabled and (teleop_robot_id is None or not active_robots[teleop_robot_id].move_to_target):
                         # Release control
                         if key.lower() == 'q' and teleop_robot_id is not None:
                             robot = active_robots[teleop_robot_id]

@@ -261,8 +261,6 @@ class Robot:
             
         # Set wheel speed
         if self.teleop and not self.move_to_target:
-            # Follow the control vector
-            # TODO: eight directions
             pass
         elif abs(motion_vector) > self.MAX_SPEED / 10:
             self.left, self.right = self.set_wheel_speeds_from_vector(motion_vector)
