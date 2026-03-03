@@ -593,7 +593,6 @@ async def get_server_data():
             #print(f"Updating robot {id}")
             active_robots[id].position = Vector2D(robot["position"]["x"], robot["position"]["y"])
             active_robots[id].orientation = robot["orientation"]
-            active_robots[id].remaining_time = robot["remaining_time"]
             active_robots[id].neighbours = robot["players"]
             active_robots[id].progress_through_zone = robot["progress_through_zone"]    
 
@@ -636,7 +635,7 @@ async def get_data(robot):
 # Send experiment info to the server to be visualised
 async def send_experiment_info():
 
-    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS
+    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time
 
     message = {"robots": {}, "targets": []}
     
@@ -658,9 +657,8 @@ async def send_experiment_info():
     }
     message["targets"].append(target_info)
 
-    # Include simulation time if experiment is running
-    if experiment_running:
-        message["simulation_time"] = simulation_time
+    # Include simulation time from robot_client
+    message["simulation_time"] = simulation_time
 
     # Send the experiment info to the server
     await server_connection.send(json.dumps(message))
