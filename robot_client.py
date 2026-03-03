@@ -31,6 +31,7 @@ else:
     import tty
 
 from controller import Robot
+import argparse
 
 ITERATION_TIME = 0.1   # Time to sleep between each iteration (default: 0.1)
 ROBOT_CONFIG = None # This will be set to the <robot_controller> tag in the experiment XML file, which contains any parameters you set for your controller in that file. See the example XML files for how to set this up.
@@ -769,6 +770,12 @@ def local_communication():
 
 # Main entry point for robot control client sample code
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Robot client controller")
+    parser.add_argument("config_file", nargs="?", default="experiments/practice1.xml", 
+                        help="Path to the experiment configuration XML file (default: experiments/practice1.xml)")
+    args = parser.parse_args()
+    
     loop = asyncio.get_event_loop()
 
     loop.run_until_complete(connect_to_server())
@@ -781,7 +788,7 @@ if __name__ == "__main__":
     print(f"Arena Limits: {ARENA_LIMITS}")
 
     # Parse experiment configurations
-    config_file = "experiments/practice1.xml"
+    config_file = args.config_file
     load_configuration(config_file)
 
     assert len(robot_ids) > 0
