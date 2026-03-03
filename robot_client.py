@@ -59,6 +59,8 @@ main_loop() using loop.run_until_complete(async_thing_to_run(ids))
 robot_ids = ROBOTS
 
 def main_loop():
+    global simulation_time
+    
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
     # This is stored in the global variable active_robots, a map of id -> instances of the Robot class (defined lower in this file) 
     if experiment_running:
@@ -91,8 +93,12 @@ def main_loop():
     if experiment_running:
         print()
 
+    # Increment simulation time if experiment is running
+    if experiment_running:
+        simulation_time += ITERATION_TIME
+
     # Sleep until next control cycle. We use 0.1 seconds by default so as to not flood the network.
-    time.sleep(0.1)
+    time.sleep(ITERATION_TIME)
 
 
 def load_configuration(xml_path='experiments/practice1.xml'):
@@ -276,6 +282,7 @@ teleop_enabled = True  # Set to False to disable teleop integration
 teleop_robot_id = None  # Currently controlled robot ID
 initializing = True  # Robots move to init positions before experiment
 experiment_running = False  # Set to True to start the experiment
+simulation_time = 0.0  # Simulation time in seconds, starts when experiment begins
 colorama.init(autoreset=True)
 
 _stdin_fd = None
@@ -386,6 +393,8 @@ def start_keyboard_listener():
                     if key.lower() == 's' and initializing and not experiment_running:
                         initializing = False
                         experiment_running = True
+                        global simulation_time
+                        simulation_time = 0.0  # Reset simulation time when experiment starts
                         # Reset robots to initial state and main experiment target
                         for robot_id in active_robots:
                             active_robots[robot_id].target = TARGET_POS
@@ -648,6 +657,10 @@ async def send_experiment_info():
         "radius": TARGET_RADIUS
     }
     message["targets"].append(target_info)
+
+    # Include simulation time if experiment is running
+    if experiment_running:
+        message["simulation_time"] = simulation_time
 
     # Send the experiment info to the server
     await server_connection.send(json.dumps(message))
