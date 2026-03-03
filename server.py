@@ -84,59 +84,37 @@ class SensorReading:
 
 
 class TimerStatus(Enum):
-    STOPPED = 0
-    STARTED = 1
-    PAUSED = 2
-    COMPLETE = 3
+    STARTED = 0
+    COMPLETE = 1
 
 
 class Timer:
-    def __init__(self, time_limit):
-        self.time_limit = time_limit
-        self.time_left = time_limit
-        self.status = TimerStatus.STOPPED
-        self.elapsed_time = 0
-        self.start_time = 0
+    def __init__(self):
+        self.current_time = 0  # Will be updated by robot_client
+        self.status = TimerStatus.STARTED
+    
+    def set_time(self, time_seconds):
+        """
+        Updates the timer with the time value received from robot_client.
+        
+        time_seconds -- Time remaining in seconds (float)
+        """
+        self.current_time = time_seconds
+        # if time_seconds <= 0:
+        #     self.status = TimerStatus.COMPLETE
+        # else:
+        #     self.status = TimerStatus.STARTED
+    
     def start(self):
-        self.start_time = time.time()
-        self.elapsed_time = 0
         self.status = TimerStatus.STARTED
-
-    def pause(self):
-        self.elapsed_time = time.time() - self.start_time
-        self.status = TimerStatus.PAUSED
-
-    def unpause(self):
-        self.status = TimerStatus.STARTED
-        self.time_limit = self.time_limit - self.elapsed_time
-        self.start_time = time.time()
-
-    def update(self):
-        if self.status == TimerStatus.STARTED:
-            self.elapsed_time = time.time() - self.start_time
-            self.time_left = self.time_limit - self.elapsed_time
-            if self.time_left <= 0:
-                self.status = TimerStatus.COMPLETE
-                self.time_left = 0
-
+    
     def getColor(self):
-        if self.status == TimerStatus.STARTED:
-            if self.time_left <= 31:
-                return yellow
-            else:
-                return white
-        elif self.status == TimerStatus.PAUSED:
-            return grey
-        elif self.status == TimerStatus.COMPLETE:
-            return red
-        else:
-            return red
+        return white
 
     def getString(self):
-
         time_string = ""
-        seconds = int(self.time_left) % 60
-        minutes = int(self.time_left) // 60
+        seconds = int(self.current_time) % 60
+        minutes = int(self.current_time) // 60
 
         seconds = str(seconds)
 
@@ -168,33 +146,29 @@ class Tracker(threading.Thread):
         self.robots = {}
 
         self.gameState = 0
-        self.timer = Timer(GAME_TIME)
+        self.timer = Timer()
         self.roboteams = {}
 
-        listener = keyboard.Listener(
-            on_press=self.on_press)
-        listener.start()
+        # listener = keyboard.Listener(
+        #     on_press=self.on_press)
+        # listener.start()
 
-    def on_press(self, key):
-        try:
-            if key.char == 'p':
-                if self.timer.status == TimerStatus.PAUSED:
-                    self.timer.unpause()
-                else:
-                    self.timer.pause()
-            if key.char == 'l':
-                pass
+    # def on_press(self, key):
+    #     try:
+    #         if key.char == 'l':
+    #             pass
 
-            if key.char == 'r':
-                self.timer = Timer(GAME_TIME)
-                # self.timer.start()
-                # self.timer.pause()
-                self.gameState = 1
-                self.robots = {}
+    #         if key.char == 'r':
+    #             self.timer = Timer()
+    #             # self.timer.start()
+    #             self.gameState = 1
+    #             self.robots = {}
 
-        except AttributeError:
-            # Special keys (Ctrl, Shift, etc.) don't have 'char' attribute - ignore them
-            pass
+    #     except AttributeError:
+    #         # Special keys (Ctrl, Shift, etc.) don't have 'char' attribute - ignore them
+    #         pass
+        
+
     """
     processes raw tags and updates self.robots to contain a dictionary of all visible robots and their IDs
     
@@ -434,7 +408,6 @@ class Tracker(threading.Thread):
                 # Process and draw robots
                 self.processRobots()
 
-                self.timer.update()
                 self.drawRobots(image)
                 
                 # Only draw init positions if we're currently receiving them
@@ -513,7 +486,6 @@ async def handler(websocket):
                     reply[id]["position"] = {"x": round(robot.position.x, 2), "y": round(robot.position.y, 2)}
                     reply[id]["orientation"] = round(robot.orientation, 2)
                     reply[id]["players"] = {}
-                    reply[id]["remaining_time"] = int(tracker.timer.time_left)
                     reply[id]["progress_through_zone"] = round(robot.distance, 2)
 
                     for neighbour_id, neighbour in robot.neighbours.items():
@@ -532,6 +504,9 @@ async def handler(websocket):
                 global robot_info, last_robot_info_update
                 robot_info = message["robots"]
                 last_robot_info_update = time.time()
+            
+            if "simulation_time" in message:
+                tracker.timer.set_time(message["simulation_time"])
 
             # Send reply, if requested
             if send_reply:
