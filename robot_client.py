@@ -59,7 +59,7 @@ main_loop() using loop.run_until_complete(async_thing_to_run(ids))
 robot_ids = ROBOTS
 
 def main_loop():
-    global simulation_time
+    global simulation_time, experiment_running, experiment_finished
     
     # This requests all virtual sensor data from the tracking server for the robots specified in robot_ids
     # This is stored in the global variable active_robots, a map of id -> instances of the Robot class (defined lower in this file) 
@@ -96,6 +96,16 @@ def main_loop():
     # Increment simulation time if experiment is running
     if experiment_running:
         simulation_time += ITERATION_TIME
+        
+        # Check for timeout
+        if simulation_time >= EXPERIMENT_TIMEOUT:
+            print(Fore.YELLOW + f"\n[TIMEOUT] Experiment timeout reached ({EXPERIMENT_TIMEOUT}s). Stopping all robots.\n")
+            experiment_running = False
+            experiment_finished = True
+            # Turn off LEDs for all robots
+            for robot_id in active_robots:
+                active_robots[robot_id].led_colour = 'off'
+            loop.run_until_complete(stop_robots(robot_ids))
 
     # Sleep until next control cycle. We use 0.1 seconds by default so as to not flood the network.
     time.sleep(ITERATION_TIME)
@@ -103,15 +113,17 @@ def main_loop():
 
 def load_configuration(xml_path='experiments/practice1.xml'):
     # Parse the experiment configurations
-    global ITERATION_TIME, ROBOT_CONFIG, ROBOTS, ROBOT_INIT_POS, TARGET_POS, TARGET_RADIUS
+    global ITERATION_TIME, ROBOT_CONFIG, ROBOTS, ROBOT_INIT_POS, TARGET_POS, TARGET_RADIUS, EXPERIMENT_TIMEOUT
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
     for child in root:
         if child.tag == 'framework':
-            ticks_per_second = float(child[1].get('ticks_per_second'))
+            experiment_elem = child[1]  # experiment tag
+            ticks_per_second = float(experiment_elem.get('ticks_per_second'))
             ITERATION_TIME = 1 / ticks_per_second
+            EXPERIMENT_TIMEOUT = float(experiment_elem.get('duration'))
             
         elif child.tag == 'controllers':
             for controller in child:
@@ -138,6 +150,7 @@ def load_configuration(xml_path='experiments/practice1.xml'):
     print(f'ROBOT_INIT_ANGLE: {ROBOT_INIT_ANGLE}')
     print(f'TARGET_POS: {TARGET_POS}')
     print(f'TARGET_RADIUS: {TARGET_RADIUS}')
+    print(f'EXPERIMENT_TIMEOUT: {EXPERIMENT_TIMEOUT}s')
 
 """
 This is an example of a behaviour. You will want to replace this with a behaviour that implements your team
@@ -282,7 +295,9 @@ teleop_enabled = True  # Set to False to disable teleop integration
 teleop_robot_id = None  # Currently controlled robot ID
 initializing = True  # Robots move to init positions before experiment
 experiment_running = False  # Set to True to start the experiment
+experiment_finished = False  # Set to True when experiment finishes (timeout)
 simulation_time = 0.0  # Simulation time in seconds, starts when experiment begins
+EXPERIMENT_TIMEOUT = 60.0  # Experiment timeout in seconds (simulation time)
 colorama.init(autoreset=True)
 
 _stdin_fd = None
@@ -635,7 +650,7 @@ async def get_data(robot):
 # Send experiment info to the server to be visualised
 async def send_experiment_info():
 
-    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time
+    global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished
 
     message = {"robots": {}, "targets": []}
     
@@ -659,6 +674,9 @@ async def send_experiment_info():
 
     # Include simulation time from robot_client
     message["simulation_time"] = simulation_time
+    
+    # Include experiment finished flag
+    message["experiment_finished"] = experiment_finished
 
     # Send the experiment info to the server
     await server_connection.send(json.dumps(message))
