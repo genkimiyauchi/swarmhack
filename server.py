@@ -47,6 +47,12 @@ last_logged_simulation_time = -1  # Track the last logged simulation time to pre
 max_robots_in_target_ever_seen = 0  # Track the maximum number of robots that have been in target
 arrival_times = {}  # Dictionary to store arrival times: {num_robots: simulation_time}
 
+# Video recording variables
+video_writer = None
+video_initialized = False
+video_lock = threading.Lock()
+next_video_frame_time = 0.0
+
 class Tag:
     def __init__(self, id, raw_tag):
         self.id = id
@@ -282,6 +288,24 @@ class Tracker(threading.Thread):
         cv2.rectangle(image, (self.min_x, self.min_y), (self.max_x, self.max_y), green, 1, lineType=cv2.LINE_AA)
 
     """
+    Responsible for drawing minimal robot visualization (just borders and center point).
+    
+    image -- The camera image for the robots to be drawn onto
+    """
+    def drawRobotsMinimal(self, image):
+        for id, robot in self.robots.items():
+            tag = robot.tag
+
+            # Draw border of tag
+            cv2.line(image, (tag.tl.x, tag.tl.y), (tag.tr.x, tag.tr.y), green, 1, lineType=cv2.LINE_AA)
+            cv2.line(image, (tag.tr.x, tag.tr.y), (tag.br.x, tag.br.y), green, 1, lineType=cv2.LINE_AA)
+            cv2.line(image, (tag.br.x, tag.br.y), (tag.bl.x, tag.bl.y), green, 1, lineType=cv2.LINE_AA)
+            cv2.line(image, (tag.bl.x, tag.bl.y), (tag.tl.x, tag.tl.y), green, 1, lineType=cv2.LINE_AA)
+
+            # Draw circle on centre point
+            cv2.circle(image, (tag.centre.x, tag.centre.y), 5, red, -1, lineType=cv2.LINE_AA)
+
+    """
     Responsible for drawing any UI element associated with the robots.
     
     image -- The camera image for the robots to be drawn onto
@@ -432,6 +456,7 @@ class Tracker(threading.Thread):
     def initialize_csv_file(self, config):
         """Initialize CSV file for experiment data logging."""
         global csv_file, csv_writer, csv_initialized, last_logged_simulation_time, max_robots_in_target_ever_seen, arrival_times
+        global video_writer, video_initialized, next_video_frame_time
         
         try:
             # Create results directory if it doesn't exist
@@ -477,6 +502,24 @@ class Tracker(threading.Thread):
             
             csv_initialized = True
             print(f"[CSV] Initialized CSV file: {csv_filepath}")
+            
+            # Initialize video writer
+            video_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.mp4"
+            video_filepath = os.path.join(results_dir, video_filename)
+            
+            # Video codec and properties (1280x720 resolution at 30 fps)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fps = 30
+            frame_size = (1280, 720)
+            
+            video_writer = cv2.VideoWriter(video_filepath, fourcc, fps, frame_size)
+            
+            if video_writer.isOpened():
+                video_initialized = True
+                next_video_frame_time = time.monotonic()
+                print(f"[VIDEO] Initialized video file: {video_filepath}")
+            else:
+                print(f"[VIDEO] Error: Could not initialize video writer")
             
         except Exception as e:
             print(f"[CSV] Error initializing CSV file: {type(e).__name__}: {e}")
@@ -544,8 +587,9 @@ class Tracker(threading.Thread):
             print(f"[CSV] Error logging robot data: {type(e).__name__}: {e}")
 
     def close_csv_file(self):
-        """Close the CSV file cleanly."""
+        """Close the CSV file cleanly and release video writer."""
         global csv_file, csv_writer, csv_initialized, last_logged_simulation_time, max_robots_in_target_ever_seen, arrival_times
+        global video_writer, video_initialized, next_video_frame_time
         
         try:
             if csv_file is not None:
@@ -568,13 +612,22 @@ class Tracker(threading.Thread):
                 last_logged_simulation_time = -1
                 max_robots_in_target_ever_seen = 0
                 arrival_times = {}
+            
+            # Release video writer (thread-safe)
+            with video_lock:
+                video_initialized = False
+                next_video_frame_time = 0.0
+                if video_writer is not None:
+                    video_writer.release()
+                    print(f"[VIDEO] Video writer released successfully")
+                    video_writer = None
         except Exception as e:
-            print(f"[CSV] Error closing CSV file: {type(e).__name__}: {e}")
+            print(f"[CSV/VIDEO] Error closing files: {type(e).__name__}: {e}")
 
 
     def run(self):
         
-        global robot_info, target_info
+        global robot_info, target_info, next_video_frame_time
         
         while not self.stop_event.is_set():
             image = self.camera.get_frame()
@@ -596,27 +649,21 @@ class Tracker(threading.Thread):
                 # Process raw ArUco output
                 self.processArUco(tag_ids, raw_tags)
 
-                # Draw boundary of virtual environment based on corner tag positions
-                self.drawBoundingBox(image)
-
                 # Process and draw robots
                 self.processRobots()
 
                 # Log robot data to CSV (if initialized)
                 self.log_robot_data(self.timer.current_time)
 
-                self.drawRobots(image)
-                
-                # Only draw init positions if we're currently receiving them
-                current_time = time.time()
-                if len(robot_info) > 0 and (current_time - last_robot_info_update) < INIT_POSITION_TIMEOUT:
-                    self.drawInitRobotPositions(image)
-                elif len(robot_info) > 0 and (current_time - last_robot_info_update) >= INIT_POSITION_TIMEOUT:
-                    # Clear robot_info if we haven't received an update in a while
-                    robot_info = {}
-                    
+                # Draw boundary of virtual environment based on corner tag positions
+                self.drawBoundingBox(image)
+
+                # Draw targets first so they stay behind other overlays
                 if len(target_info) > 0:
                     self.drawTargets(image)
+
+                # Now add all UI elements (labels, orientation, sensing ranges, text)
+                self.drawRobots(image)
 
                 self.drawRobotsInTargetCount(image)
 
@@ -628,16 +675,39 @@ class Tracker(threading.Thread):
                 position = (20, 60)
                 cv2.putText(image, text, position, font, font_scale, self.timer.getColor(), thickness * 3, cv2.LINE_AA)
                 cv2.putText(image, text, position, font, font_scale, black, thickness, cv2.LINE_AA)
+                
+                # Now draw the overlays (init positions and targets)
+                current_time = time.time()
+                if len(robot_info) > 0 and (current_time - last_robot_info_update) < INIT_POSITION_TIMEOUT:
+                    self.drawInitRobotPositions(image)
+                elif len(robot_info) > 0 and (current_time - last_robot_info_update) >= INIT_POSITION_TIMEOUT:
+                    # Clear robot_info if we haven't received an update in a while
+                    robot_info = {}
 
-                # Transparency for overlaid augments
+                # Save image with overlays applied (or use current overlay blend)
                 alpha = 0.3
-                image = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+                image_with_overlay = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+                
+                # Record to video file at a stable 30fps (thread-safe)
+                if self.timer.current_time > 0:
+                    now = time.monotonic()
+                    with video_lock:
+                        if video_initialized and video_writer is not None:
+                            if now >= next_video_frame_time:
+                                frame = cv2.resize(image_with_overlay, (1280, 720))
+                                video_writer.write(frame)
+                                frame_period = 1.0 / 30.0
+                                if next_video_frame_time == 0.0:
+                                    next_video_frame_time = now + frame_period
+                                else:
+                                    while next_video_frame_time <= now:
+                                        next_video_frame_time += frame_period
 
             window_name = 'SwarmHack'
 
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(window_name, 1280, 720)
-            cv2.imshow(window_name, image)
+            cv2.imshow(window_name, image_with_overlay)
 
             # Check for 'q' key to quit
             if cv2.waitKey(1) == ord('q'):
@@ -648,88 +718,94 @@ class Tracker(threading.Thread):
         cv2.destroyAllWindows()
 
 async def handler(websocket):
-    async for packet in websocket:
-        message = json.loads(packet)
-        
-        # Process any requests received
-        reply = {}
-        send_reply = False
-        if tracker.calibrated:
-            if "check_awake" in message:
-                reply["awake"] = True
-                send_reply = True
-
-            if "get_arena_limits" in message:
-                min_x_m = tracker.min_x / tracker.scale_factor
-                min_y_m = tracker.min_y / tracker.scale_factor
-                max_x_m = tracker.max_x / tracker.scale_factor
-                max_y_m = tracker.max_y / tracker.scale_factor
-                print(
-                    "tracker arena limits (meters): "
-                    f"min_x={round(min_x_m, 2)}, min_y={round(min_y_m, 2)}, "
-                    f"max_x={round(max_x_m, 2)}, max_y={round(max_y_m, 2)}"
-                )
-                reply["arena_limits"] = {
-                    "min_x": round(min_x_m, 2),
-                    "min_y": round(min_y_m, 2),
-                    "max_x": round(max_x_m, 2),
-                    "max_y": round(max_y_m, 2),
-                }
-                send_reply = True
-
-            if "get_robots" in message:
-                send_reply = True
-                for id, robot in tracker.robots.items():
-
-                    reply[id] = {}
-                    reply[id]["position"] = {"x": round(robot.position.x, 2), "y": round(robot.position.y, 2)}
-                    reply[id]["orientation"] = round(robot.orientation, 2)
-                    reply[id]["players"] = {}
-                    reply[id]["progress_through_zone"] = round(robot.distance, 2)
-
-                    for neighbour_id, neighbour in robot.neighbours.items():
-
-                        neighbour_robot = tracker.robots[neighbour_id]
-                        reply[id]["players"][neighbour_id] = {}
-                        reply[id]["players"][neighbour_id]["range"] = round(neighbour.range, 2)
-                        reply[id]["players"][neighbour_id]["bearing"] = round(neighbour.bearing, 2)
-                        reply[id]["players"][neighbour_id]["orientation"] = round(neighbour.orientation, 2)
-
-            if "get_in_target" in message:
-                robots_in_target, _ = tracker.getRobotsInTargetCount()
-                reply["get_in_target"] = {
-                    "robots_in_target": robots_in_target,
-                }
-                send_reply = True
-
-            if "targets" in message:
-                global target_info
-                target_info = message["targets"]
-
-            if "robots" in message:
-                global robot_info, last_robot_info_update
-                robot_info = message["robots"]
-                last_robot_info_update = time.time()
+    try:
+        async for packet in websocket:
+            message = json.loads(packet)
             
-            if "experiment_config" in message:
-                global experiment_config
-                experiment_config = message["experiment_config"]
-                print(f"[CSV] Received experiment config: {experiment_config}")
-                # Initialize CSV file with the experiment configuration
-                tracker.initialize_csv_file(experiment_config)
-            
-            if "simulation_time" in message:
-                tracker.timer.set_time(message["simulation_time"])
+            # Process any requests received
+            reply = {}
+            send_reply = False
+            if tracker.calibrated:
+                if "check_awake" in message:
+                    reply["awake"] = True
+                    send_reply = True
 
-            if "experiment_finished" in message:
-                tracker.timer.set_complete(message["experiment_finished"])
-                # Close CSV file as soon as experiment finishes
-                if message["experiment_finished"]:
-                    tracker.close_csv_file()
+                if "get_arena_limits" in message:
+                    min_x_m = tracker.min_x / tracker.scale_factor
+                    min_y_m = tracker.min_y / tracker.scale_factor
+                    max_x_m = tracker.max_x / tracker.scale_factor
+                    max_y_m = tracker.max_y / tracker.scale_factor
+                    print(
+                        "tracker arena limits (meters): "
+                        f"min_x={round(min_x_m, 2)}, min_y={round(min_y_m, 2)}, "
+                        f"max_x={round(max_x_m, 2)}, max_y={round(max_y_m, 2)}"
+                    )
+                    reply["arena_limits"] = {
+                        "min_x": round(min_x_m, 2),
+                        "min_y": round(min_y_m, 2),
+                        "max_x": round(max_x_m, 2),
+                        "max_y": round(max_y_m, 2),
+                    }
+                    send_reply = True
 
-            # Send reply, if requested
-            if send_reply:
-                await websocket.send(json.dumps(reply))
+                if "get_robots" in message:
+                    send_reply = True
+                    for id, robot in tracker.robots.items():
+
+                        reply[id] = {}
+                        reply[id]["position"] = {"x": round(robot.position.x, 2), "y": round(robot.position.y, 2)}
+                        reply[id]["orientation"] = round(robot.orientation, 2)
+                        reply[id]["players"] = {}
+                        reply[id]["progress_through_zone"] = round(robot.distance, 2)
+
+                        for neighbour_id, neighbour in robot.neighbours.items():
+
+                            neighbour_robot = tracker.robots[neighbour_id]
+                            reply[id]["players"][neighbour_id] = {}
+                            reply[id]["players"][neighbour_id]["range"] = round(neighbour.range, 2)
+                            reply[id]["players"][neighbour_id]["bearing"] = round(neighbour.bearing, 2)
+                            reply[id]["players"][neighbour_id]["orientation"] = round(neighbour.orientation, 2)
+
+                if "get_in_target" in message:
+                    robots_in_target, _ = tracker.getRobotsInTargetCount()
+                    reply["get_in_target"] = {
+                        "robots_in_target": robots_in_target,
+                    }
+                    send_reply = True
+
+                if "targets" in message:
+                    global target_info
+                    target_info = message["targets"]
+
+                if "robots" in message:
+                    global robot_info, last_robot_info_update
+                    robot_info = message["robots"]
+                    last_robot_info_update = time.time()
+                
+                if "experiment_config" in message:
+                    global experiment_config
+                    experiment_config = message["experiment_config"]
+                    print(f"[CSV] Received experiment config: {experiment_config}")
+                    # Initialize CSV file with the experiment configuration
+                    tracker.initialize_csv_file(experiment_config)
+                
+                if "simulation_time" in message:
+                    tracker.timer.set_time(message["simulation_time"])
+
+                if "experiment_finished" in message:
+                    tracker.timer.set_complete(message["experiment_finished"])
+                    # Close CSV file as soon as experiment finishes
+                    if message["experiment_finished"]:
+                        tracker.close_csv_file()
+
+                # Send reply, if requested
+                if send_reply:
+                    await websocket.send(json.dumps(reply))
+    except websockets.exceptions.ConnectionClosedError:
+        # Connection closed by client - this is normal, especially after experiment_finished
+        pass
+    except Exception as e:
+        print(f"[HANDLER] Unexpected error in connection handler: {type(e).__name__}: {e}")
 
 
 async def main():
