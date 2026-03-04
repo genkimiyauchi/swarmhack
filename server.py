@@ -14,6 +14,9 @@ import angles
 import time
 from math import sqrt
 from enum import Enum
+import csv
+import os
+from datetime import datetime
 
 red = (0, 0, 255)
 green = (0, 255, 0)
@@ -34,6 +37,15 @@ last_robot_info_update = 0  # Timestamp of last received robot_info
 
 GAME_TIME = 5 * 60
 # random.seed(1)
+
+# CSV logging variables
+csv_file = None
+csv_writer = None
+experiment_config = None
+csv_initialized = False
+last_logged_simulation_time = -1  # Track the last logged simulation time to prevent duplicate entries
+max_robots_in_target_ever_seen = 0  # Track the maximum number of robots that have been in target
+arrival_times = {}  # Dictionary to store arrival times: {num_robots: simulation_time}
 
 class Tag:
     def __init__(self, id, raw_tag):
@@ -417,6 +429,148 @@ class Tracker(threading.Thread):
         cv2.putText(image, text, position, font, font_scale, white, thickness * 3, cv2.LINE_AA)
         cv2.putText(image, text, position, font, font_scale, black, thickness, cv2.LINE_AA)
 
+    def initialize_csv_file(self, config):
+        """Initialize CSV file for experiment data logging."""
+        global csv_file, csv_writer, csv_initialized, last_logged_simulation_time, max_robots_in_target_ever_seen, arrival_times
+        
+        try:
+            # Create results directory if it doesn't exist
+            results_dir = "results"
+            if not os.path.exists(results_dir):
+                os.makedirs(results_dir)
+                print(f"[CSV] Created results directory: {results_dir}")
+            
+            # Extract parameters from config
+            experiment_name = config.get("experiment_name", "experiment")
+            num_robots = config.get("num_robots", 0)
+            robot_speed = config.get("robot_speed", 0)
+            separation_distance = config.get("separation_distance", 0)
+            broadcast_duration = config.get("broadcast_duration", 0)
+            
+            # Get current date and time
+            now = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create filename: <experiment_name>_R<robots>_S<speed>_D<separation>_B<broadcast>_<date>_<time>.csv
+            csv_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.csv"
+            csv_filepath = os.path.join(results_dir, csv_filename)
+            
+            # Open CSV file for writing
+            csv_file = open(csv_filepath, 'w', newline='')
+            csv_writer = csv.writer(csv_file)
+            
+            # Write header row
+            header = ['timestamp', 'simulation_time']
+            for robot_id in sorted(self.robots.keys()):
+                header.extend([
+                    f'robot_{robot_id}_x',
+                    f'robot_{robot_id}_y',
+                    f'robot_{robot_id}_orientation',
+                    f'robot_{robot_id}_in_target'
+                ])
+            csv_writer.writerow(header)
+            csv_file.flush()
+            
+            # Reset tracking variables (will start logging once simulation_time > 0)
+            last_logged_simulation_time = -1
+            max_robots_in_target_ever_seen = 0
+            arrival_times = {}
+            
+            csv_initialized = True
+            print(f"[CSV] Initialized CSV file: {csv_filepath}")
+            
+        except Exception as e:
+            print(f"[CSV] Error initializing CSV file: {type(e).__name__}: {e}")
+
+    def log_robot_data(self, simulation_time):
+        """Log current robot positions and states to CSV file."""
+        global csv_file, csv_writer, last_logged_simulation_time, max_robots_in_target_ever_seen, arrival_times
+        
+        if not csv_initialized or csv_file is None or csv_writer is None:
+            return
+        
+        # Only log if this is a different simulation timestep than the last logged one
+        # This ensures we log once per simulated timestep, not once per camera frame
+        if simulation_time == last_logged_simulation_time:
+            return
+        
+        # Only log if simulation has actually started (simulation_time > 0)
+        if simulation_time <= 0:
+            return
+        
+        try:
+            # Get number of robots in target
+            robots_in_target, _ = self.getRobotsInTargetCount()
+            
+            # Check if this is a new maximum number of robots in target
+            if robots_in_target > max_robots_in_target_ever_seen:
+                max_robots_in_target_ever_seen = robots_in_target
+                arrival_times[robots_in_target] = round(simulation_time, 1)
+                print(f"[CSV] ARRIVAL_{robots_in_target}: {round(simulation_time, 1)}s")
+            
+            # Prepare row data with rounded simulation_time to 1 decimal place
+            row = [time.time(), round(simulation_time, 1)]
+            
+            # Add robot data
+            for robot_id in sorted(self.robots.keys()):
+                if robot_id in self.robots:
+                    robot = self.robots[robot_id]
+                    
+                    # Check if robot is in target
+                    is_in_target = 0
+                    if len(target_info) > 0:
+                        target = target_info[0]
+                        target_cx = self.min_x + int(target["position"]["x"] * self.scale_factor)
+                        target_cy = self.min_y + int(target["position"]["y"] * self.scale_factor)
+                        target_radius_px = int(target["radius"] * self.scale_factor)
+                        tag = robot.tag
+                        if math.dist([tag.centre.x, tag.centre.y], [target_cx, target_cy]) <= target_radius_px:
+                            is_in_target = 1
+                    
+                    row.extend([
+                        round(robot.position.x, 4),
+                        round(robot.position.y, 4),
+                        round(robot.orientation, 4),
+                        is_in_target
+                    ])
+            
+            # Write row to CSV
+            csv_writer.writerow(row)
+            csv_file.flush()
+            
+            # Update last logged simulation time
+            last_logged_simulation_time = simulation_time
+            
+        except Exception as e:
+            print(f"[CSV] Error logging robot data: {type(e).__name__}: {e}")
+
+    def close_csv_file(self):
+        """Close the CSV file cleanly."""
+        global csv_file, csv_writer, csv_initialized, last_logged_simulation_time, max_robots_in_target_ever_seen, arrival_times
+        
+        try:
+            if csv_file is not None:
+                # Write a blank row separator
+                csv_writer.writerow([])
+                csv_writer.writerow(['ARRIVAL_TIMES'])
+                
+                # Write arrival times (only the times, no labels)
+                for num_robots in sorted(arrival_times.keys()):
+                    sim_time = arrival_times[num_robots]
+                    csv_writer.writerow([sim_time])
+                
+                csv_file.flush()
+                csv_file.close()
+                print(f"[CSV] CSV file closed successfully")
+                print(f"[CSV] Arrival times: {arrival_times}")
+                csv_file = None
+                csv_writer = None
+                csv_initialized = False
+                last_logged_simulation_time = -1
+                max_robots_in_target_ever_seen = 0
+                arrival_times = {}
+        except Exception as e:
+            print(f"[CSV] Error closing CSV file: {type(e).__name__}: {e}")
+
 
     def run(self):
         
@@ -447,6 +601,9 @@ class Tracker(threading.Thread):
 
                 # Process and draw robots
                 self.processRobots()
+
+                # Log robot data to CSV (if initialized)
+                self.log_robot_data(self.timer.current_time)
 
                 self.drawRobots(image)
                 
@@ -554,11 +711,21 @@ async def handler(websocket):
                 robot_info = message["robots"]
                 last_robot_info_update = time.time()
             
+            if "experiment_config" in message:
+                global experiment_config
+                experiment_config = message["experiment_config"]
+                print(f"[CSV] Received experiment config: {experiment_config}")
+                # Initialize CSV file with the experiment configuration
+                tracker.initialize_csv_file(experiment_config)
+            
             if "simulation_time" in message:
                 tracker.timer.set_time(message["simulation_time"])
 
             if "experiment_finished" in message:
                 tracker.timer.set_complete(message["experiment_finished"])
+                # Close CSV file as soon as experiment finishes
+                if message["experiment_finished"]:
+                    tracker.close_csv_file()
 
             # Send reply, if requested
             if send_reply:
@@ -585,6 +752,8 @@ async def main():
     finally:
         # Ensure tracker stops
         tracker.stop_event.set()
+        # Close CSV file
+        tracker.close_csv_file()
 
 if __name__ == "__main__":
     try:

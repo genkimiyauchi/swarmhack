@@ -42,6 +42,14 @@ TARGET_POS = None
 TARGET_RADIUS = None
 ARENA_LIMITS = {}
 
+# Experiment parameters for CSV logging
+EXPERIMENT_NAME = None  # Name of the experiment (basename of XML file without extension)
+NUM_ROBOTS = 0  # Number of robots
+ROBOT_SPEED = 0.0  # Max speed from wheel_turning
+SEPARATION_DISTANCE = 0.0  # target_distance_walk from flocking
+BROADCAST_DURATION = 0.0  # broadcast_duration from motion
+EXPERIMENT_PARAMS_SENT = False  # Flag to track if params have been sent to server
+
 """
 This function is the main loop of your application. You can make any changes you want throughout this 
 file, but most of your game logic will be located in here.
@@ -139,6 +147,11 @@ def main_loop():
 def load_configuration(xml_path='experiments/practice1.xml'):
     # Parse the experiment configurations
     global ITERATION_TIME, ROBOT_CONFIG, ROBOTS, ROBOT_INIT_POS, TARGET_POS, TARGET_RADIUS, EXPERIMENT_TIMEOUT
+    global EXPERIMENT_NAME, NUM_ROBOTS, ROBOT_SPEED, SEPARATION_DISTANCE, BROADCAST_DURATION
+
+    # Extract experiment name from the XML file path (e.g., "practice1" from "experiments/practice1.xml")
+    import os
+    EXPERIMENT_NAME = os.path.splitext(os.path.basename(xml_path))[0]
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -154,6 +167,14 @@ def load_configuration(xml_path='experiments/practice1.xml'):
             for controller in child:
                 if controller.tag == 'robot_controller':
                     ROBOT_CONFIG = controller
+                    # Extract speed, separation distance, and broadcast duration from controller params
+                    for param_group in controller[0]:  # params tag
+                        if param_group.tag == "wheel_turning":
+                            ROBOT_SPEED = float(param_group.get("max_speed", 0.1))
+                        elif param_group.tag == "flocking":
+                            SEPARATION_DISTANCE = float(param_group.get("target_distance_walk", 0.2))
+                        elif param_group.tag == "motion":
+                            BROADCAST_DURATION = float(param_group.get("broadcast_duration", 0.0))
            
         elif child.tag == 'arena':
             for entity in child:
@@ -170,12 +191,17 @@ def load_configuration(xml_path='experiments/practice1.xml'):
                     ROBOT_INIT_POS[name] = Vector2D(float(x_str), float(y_str))
                     ROBOT_INIT_ANGLE[name] = float(entity.get('orientation')[2]) # Orientation is given as x,y,z euler angles, but we only care about the z angle (rotation around vertical axis)
 
+    # Count the number of robots
+    NUM_ROBOTS = len(ROBOTS)
+
+    print(f'Experiment: {EXPERIMENT_NAME}')
     print(f'ROBOTS: {ROBOTS}')
     print(f'ROBOT_INIT_POS: {ROBOT_INIT_POS}')
     print(f'ROBOT_INIT_ANGLE: {ROBOT_INIT_ANGLE}')
     print(f'TARGET_POS: {TARGET_POS}')
     print(f'TARGET_RADIUS: {TARGET_RADIUS}')
     print(f'EXPERIMENT_TIMEOUT: {EXPERIMENT_TIMEOUT}s')
+    print(f'CSV Parameters - Robots: {NUM_ROBOTS}, Speed: {ROBOT_SPEED}, Separation: {SEPARATION_DISTANCE}, Broadcast: {BROADCAST_DURATION}s')
 
 """
 This is an example of a behaviour. You will want to replace this with a behaviour that implements your team
@@ -714,8 +740,21 @@ async def get_data(robot):
 async def send_experiment_info():
 
     global ROBOTS, ROBOT_INIT_POS, ROBOT_INIT_ANGLE, TARGET_POS, TARGET_RADIUS, simulation_time, experiment_finished, targets_updated, teleop_robot_id, teleop_target_shown_once
+    global EXPERIMENT_PARAMS_SENT, EXPERIMENT_NAME, NUM_ROBOTS, ROBOT_SPEED, SEPARATION_DISTANCE, BROADCAST_DURATION
 
     message = {"robots": {}, "targets": []}
+    
+    # Send experiment parameters once at the beginning
+    if not EXPERIMENT_PARAMS_SENT:
+        message["experiment_config"] = {
+            "experiment_name": EXPERIMENT_NAME,
+            "num_robots": NUM_ROBOTS,
+            "robot_speed": ROBOT_SPEED,
+            "separation_distance": SEPARATION_DISTANCE,
+            "broadcast_duration": BROADCAST_DURATION
+        }
+        EXPERIMENT_PARAMS_SENT = True
+        print(f"[CSV] Sent experiment config to server: {message['experiment_config']}")
     
     # Send init robot positions only during initialization phase
     if initializing:
