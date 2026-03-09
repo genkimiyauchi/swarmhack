@@ -337,6 +337,15 @@ class Robot:
         if self.init_target is None:
             return
         
+        self.reset_variables()
+        self.get_messages()
+        
+        # Message to broadcast
+        msg = Message()
+        msg.id = self.id
+        msg.team_id = self.team_id
+        self.msg = msg
+        
         # Transform target from arena-local to global coordinates
         target_global = Vector2D(
             self.init_target.x + self.arena_limits["min_x"],
@@ -347,26 +356,24 @@ class Robot:
         dist_to_init = self.position.distance_to(target_global)
         
         # Phase 1: Move to position
-        INIT_DISTANCE_THRESHOLD = 0.04
-        if dist_to_init >= INIT_DISTANCE_THRESHOLD:
+        INIT_POS_ARRIVE_THRESHOLD = 0.04
+        if dist_to_init >= INIT_POS_ARRIVE_THRESHOLD:
             # Get attraction vector toward init target
             attraction_vector = self.get_attraction_vector(target_global)
             
             # Check for nearby robots blocking the path and calculate repulsion
             all_msgs = self.team_msgs + self.other_msgs
-            repulsion_vector = Vector2D(0, 0)
-            
             for msg in all_msgs:
                 if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
                     # Check if robot is blocking the direct path ahead (within ±90 degrees of heading)
                     if str(msg.id) in self.neighbours:
                         bearing = self.neighbours[str(msg.id)]['bearing']
-                        if abs(bearing) < 90:  # Within 90 degrees of heading direction
-                            repulsion_vector = self.get_robot_repulsion_vector(all_msgs)
-                            break  # Found a blocking robot, repel from all nearby robots
-            
-            # Combine attraction to init target with repulsion from nearby robots
-            motion_vector = attraction_vector + repulsion_vector
+                        if abs(bearing) < math.radians(90):  # Within 90 degrees of heading direction
+                            motion_vector = self.get_robot_repulsion_vector(all_msgs)
+                            break  # Found a blocking robot, use repulsion
+            else:
+                # No blocking robot found, use attraction to init target
+                motion_vector = attraction_vector
             
             # Only move if vector magnitude is above threshold
             if abs(motion_vector) > self.MAX_SPEED / 10:
