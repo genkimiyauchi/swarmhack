@@ -86,12 +86,6 @@ class Robot:
         self.sensor_range = 0.3 # 30cm sensing radius
         self.neighbours = {}
 
-        self.out_of_bounds = False
-        self.distance = 0
-        self.ball_dist = None
-        self.team = "UNASSIGNED"
-        self.ball = None
-
 
 class SensorReading:
     def __init__(self, range, bearing, orientation=0, workers=0):
@@ -380,7 +374,7 @@ class Tracker(threading.Thread):
             # Draw line from centre point to front of tag
             centre = Vector2D(cx, cy)
             length_m = abs(tag.front - tag.centre) * 2 / self.scale_factor
-            angle_rad = math.radians(robot["initial_orientation"])
+            angle_rad = robot["initial_orientation"]
 
             front_x_m = robot["initial_position"]["x"] + length_m * math.cos(angle_rad)
             front_y_m = robot["initial_position"]["y"] + length_m * math.sin(angle_rad)
@@ -756,7 +750,6 @@ async def handler(websocket):
                         reply[id]["position"] = {"x": round(robot.position.x, 2), "y": round(robot.position.y, 2)}
                         reply[id]["orientation"] = round(robot.orientation, 2)
                         reply[id]["players"] = {}
-                        reply[id]["progress_through_zone"] = round(robot.distance, 2)
 
                         for neighbour_id, neighbour in robot.neighbours.items():
 

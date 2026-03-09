@@ -189,8 +189,10 @@ def load_configuration(xml_path='experiments/practice1.xml'):
                     pos_str = entity.get("position")
                     x_str, y_str, *_ = pos_str.split(",")
                     ROBOT_INIT_POS[name] = Vector2D(float(x_str), float(y_str))
-                    ROBOT_INIT_ANGLE[name] = float(entity.get('orientation')[2]) # Orientation is given as x,y,z euler angles, but we only care about the z angle (rotation around vertical axis)
-
+                    orientation_str = entity.get('orientation', '0,0,0')
+                    _, _, z_str = orientation_str.split(',')
+                    ROBOT_INIT_ANGLE[name] = float(z_str)  # Orientation is x,y,z Euler angles; keep only z (yaw)
+                    
     # Count the number of robots
     NUM_ROBOTS = len(ROBOTS)
 
@@ -682,7 +684,6 @@ async def get_server_data():
             active_robots[id].position = Vector2D(robot["position"]["x"], robot["position"]["y"])
             active_robots[id].orientation = robot["orientation"]
             active_robots[id].neighbours = robot["players"]
-            active_robots[id].progress_through_zone = robot["progress_through_zone"]    
 
     except Exception as e:
         print(f"get_server_data: {type(e).__name__}: {e}")
