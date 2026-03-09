@@ -56,6 +56,9 @@
     
     <e-puck id="1" position="0.5,0.5,0" orientation="0,0,0" />
     <e-puck id="20" position="0.6,0.6,0" orientation="0,0,0" />
+    <e-puck id="13" position="0.5,0.8,0" orientation="0,0,3.14" />
+    <e-puck id="14" position="0.6,0.9,0" orientation="0,0,1.57" />
+    <e-puck id="18" position="0.2,0.2,0" orientation="0,0,4.9" />
 
   </arena>
 
