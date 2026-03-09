@@ -473,7 +473,11 @@ class Robot:
         
         for msg in all_msgs:
             if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
-                return self.get_robot_repulsion_vector(all_msgs)
+                # Check if robot is blocking the direct path ahead (within ±45 degrees of heading)
+                if str(msg.id) in self.neighbours:
+                    bearing = self.neighbours[str(msg.id)]['bearing']
+                    if abs(bearing) < 90:  # Within 90 degrees of heading direction
+                        return self.get_robot_repulsion_vector(all_msgs)
             
         def _normalize_angle(angle):
             return math.atan2(math.sin(angle), math.cos(angle))
