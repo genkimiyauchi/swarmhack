@@ -17,6 +17,7 @@ from enum import Enum
 import csv
 import os
 from datetime import datetime
+import argparse
 
 red = (0, 0, 255)
 green = (0, 255, 0)
@@ -37,6 +38,10 @@ last_robot_info_update = 0  # Timestamp of last received robot_info
 
 GAME_TIME = 5 * 60
 # random.seed(1)
+
+# Command-line arguments
+save_log = False
+save_video = False
 
 # CSV logging variables
 csv_file = None
@@ -143,11 +148,13 @@ class Timer:
 class Tracker(threading.Thread):
 
 
-    def __init__(self):
+    def __init__(self, save_log=False, save_video=False):
 
         threading.Thread.__init__(self)
         self.daemon = True  # Make thread daemon so it stops when main program exits
         self.stop_event = threading.Event()  # Flag to signal thread to stop
+        self.save_log = save_log
+        self.save_video = save_video
         self.camera = Camera()
         self.calibrated = False
         self.num_corner_tags = 0
@@ -469,51 +476,58 @@ class Tracker(threading.Thread):
             # Get current date and time
             now = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Create filename: <experiment_name>_R<robots>_S<speed>_D<separation>_B<broadcast>_<date>_<time>.csv
-            csv_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.csv"
-            csv_filepath = os.path.join(results_dir, csv_filename)
-            
-            # Open CSV file for writing
-            csv_file = open(csv_filepath, 'w', newline='')
-            csv_writer = csv.writer(csv_file)
-            
-            # Write header row
-            header = ['timestamp', 'simulation_time']
-            for robot_id in sorted(self.robots.keys()):
-                header.extend([
-                    f'robot_{robot_id}_x',
-                    f'robot_{robot_id}_y',
-                    f'robot_{robot_id}_orientation',
-                    f'robot_{robot_id}_in_target'
-                ])
-            csv_writer.writerow(header)
-            csv_file.flush()
-            
-            # Reset tracking variables (will start logging once simulation_time > 0)
-            last_logged_simulation_time = -1
-            max_robots_in_target_ever_seen = 0
-            arrival_times = {}
-            
-            csv_initialized = True
-            print(f"[CSV] Initialized CSV file: {csv_filepath}")
-            
-            # Initialize video writer
-            video_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.mp4"
-            video_filepath = os.path.join(results_dir, video_filename)
-            
-            # Video codec and properties (1280x720 resolution at 30 fps)
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            fps = 30
-            frame_size = (1280, 720)
-            
-            video_writer = cv2.VideoWriter(video_filepath, fourcc, fps, frame_size)
-            
-            if video_writer.isOpened():
-                video_initialized = True
-                next_video_frame_time = time.monotonic()
-                print(f"[VIDEO] Initialized video file: {video_filepath}")
+            # Initialize CSV logging if enabled
+            if self.save_log:
+                # Create filename: <experiment_name>_R<robots>_S<speed>_D<separation>_B<broadcast>_<date>_<time>.csv
+                csv_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.csv"
+                csv_filepath = os.path.join(results_dir, csv_filename)
+                
+                # Open CSV file for writing
+                csv_file = open(csv_filepath, 'w', newline='')
+                csv_writer = csv.writer(csv_file)
+                
+                # Write header row
+                header = ['timestamp', 'simulation_time']
+                for robot_id in sorted(self.robots.keys()):
+                    header.extend([
+                        f'robot_{robot_id}_x',
+                        f'robot_{robot_id}_y',
+                        f'robot_{robot_id}_orientation',
+                        f'robot_{robot_id}_in_target'
+                    ])
+                csv_writer.writerow(header)
+                csv_file.flush()
+                
+                # Reset tracking variables (will start logging once simulation_time > 0)
+                last_logged_simulation_time = -1
+                max_robots_in_target_ever_seen = 0
+                arrival_times = {}
+                
+                csv_initialized = True
+                print(f"[CSV] Initialized CSV file: {csv_filepath}")
             else:
-                print(f"[VIDEO] Error: Could not initialize video writer")
+                print(f"[CSV] CSV logging disabled")
+            
+            # Initialize video recording if enabled
+            if self.save_video:
+                video_filename = f"{experiment_name}_R{num_robots}_S{robot_speed}_D{separation_distance}_B{broadcast_duration}_{now}.mp4"
+                video_filepath = os.path.join(results_dir, video_filename)
+                
+                # Video codec and properties (1280x720 resolution at 30 fps)
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                fps = 30
+                frame_size = (1280, 720)
+                
+                video_writer = cv2.VideoWriter(video_filepath, fourcc, fps, frame_size)
+                
+                if video_writer.isOpened():
+                    video_initialized = True
+                    next_video_frame_time = time.monotonic()
+                    print(f"[VIDEO] Initialized video file: {video_filepath}")
+                else:
+                    print(f"[VIDEO] Error: Could not initialize video writer")
+            else:
+                print(f"[VIDEO] Video recording disabled")
             
         except Exception as e:
             print(f"[CSV] Error initializing CSV file: {type(e).__name__}: {e}")
@@ -801,10 +815,10 @@ async def handler(websocket):
         print(f"[HANDLER] Unexpected error in connection handler: {type(e).__name__}: {e}")
 
 
-async def main():
+async def main(save_log=False, save_video=False):
     global tracker
     print("Initializing Tracker...")
-    tracker = Tracker()
+    tracker = Tracker(save_log=save_log, save_video=save_video)
     tracker.start()
 
     print("Starting WebSocket server on port 6001...")
@@ -825,7 +839,13 @@ async def main():
         tracker.close_csv_file()
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Robot tracking server")
+    parser.add_argument("--save-log", action="store_true", help="Enable CSV logging (default: False)")
+    parser.add_argument("--save-video", action="store_true", help="Enable video recording (default: False)")
+    args = parser.parse_args()
+    
     try:
-        asyncio.run(main())
+        asyncio.run(main(save_log=args.save_log, save_video=args.save_video))
     except KeyboardInterrupt:
         print("\nServer shut down by user.")
