@@ -349,8 +349,24 @@ class Robot:
         # Phase 1: Move to position
         INIT_DISTANCE_THRESHOLD = 0.04
         if dist_to_init >= INIT_DISTANCE_THRESHOLD:
-            # Get motion vector toward init target
-            motion_vector = self.get_attraction_vector(target_global)
+            # Get attraction vector toward init target
+            attraction_vector = self.get_attraction_vector(target_global)
+            
+            # Check for nearby robots blocking the path and calculate repulsion
+            all_msgs = self.team_msgs + self.other_msgs
+            repulsion_vector = Vector2D(0, 0)
+            
+            for msg in all_msgs:
+                if abs(msg.direction) < self.TARGET_DISTANCE_WALK:
+                    # Check if robot is blocking the direct path ahead (within ±90 degrees of heading)
+                    if str(msg.id) in self.neighbours:
+                        bearing = self.neighbours[str(msg.id)]['bearing']
+                        if abs(bearing) < 90:  # Within 90 degrees of heading direction
+                            repulsion_vector = self.get_robot_repulsion_vector(all_msgs)
+                            break  # Found a blocking robot, repel from all nearby robots
+            
+            # Combine attraction to init target with repulsion from nearby robots
+            motion_vector = attraction_vector + repulsion_vector
             
             # Only move if vector magnitude is above threshold
             if abs(motion_vector) > self.MAX_SPEED / 10:
