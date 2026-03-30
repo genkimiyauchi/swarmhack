@@ -30,7 +30,7 @@ black = (0, 0, 0)
 white = (255, 255, 255)
 grey = (100, 100, 100)
 
-target_info = {}
+target_info = []
 robot_info = {}
 
 INIT_POSITION_TIMEOUT = 2.0  # Stop drawing init positions if no update for 2 seconds
@@ -767,7 +767,6 @@ async def handler(websocket):
 
                         for neighbour_id, neighbour in robot.neighbours.items():
 
-                            neighbour_robot = tracker.robots[neighbour_id]
                             reply[id]["players"][neighbour_id] = {}
                             reply[id]["players"][neighbour_id]["range"] = round(neighbour.range, 2)
                             reply[id]["players"][neighbour_id]["bearing"] = round(neighbour.bearing, 2)

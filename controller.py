@@ -409,7 +409,6 @@ class Robot:
             # print(f"Robot {self.id}: Reached init position")
 
     
-    
     def get_robot_repulsion_vector(self, msgs):
         res_vec = Vector2D(0,0)
         counter = 0
@@ -591,11 +590,3 @@ class Robot:
         # print(f'Robot {self.id}: Motor units - left={left:.0f}, right={right:.0f}')
             
         return left, right
-    
-    
-    def set_wheel_speeds_from_vector_homing(self, vector):
-        pass
-    
-    
-    def set_wheel_speeds_from_eight_directions(self, vector):
-        pass
